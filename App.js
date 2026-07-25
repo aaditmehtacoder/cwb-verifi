@@ -16,7 +16,6 @@ import {
 
 import { C, F, S } from './src/theme';
 import { VerifiProvider, useVerifi } from './src/store';
-import Notice from './src/components/Notice';
 import Icon from './src/components/Icon';
 import Logo from './src/components/Logo';
 import { Check } from './src/components/ui';
@@ -27,7 +26,8 @@ import Home from './src/screens/Home';
 import Scan from './src/screens/Scan';
 import SignIn from './src/screens/SignIn';
 import Chat from './src/screens/Chat';
-import Record from './src/screens/Record';
+import Ready from './src/screens/Ready';
+import StartEvent from './src/screens/StartEvent';
 import Teacher from './src/screens/Teacher';
 import Student from './src/screens/Student';
 import Parent from './src/screens/Parent';
@@ -41,7 +41,8 @@ const SCREENS = {
   scan: { component: Scan, label: 'Scan' },
   signin: { component: SignIn, label: 'Sign in' },
   chat: { component: Chat, label: 'Messages' },
-  record: { component: Record, label: 'Sweep' },
+  ready: { component: Ready, label: 'Ready check' },
+  start: { component: StartEvent, label: 'Start' },
   teacher: { component: Teacher, label: 'Teacher' },
   student: { component: Student, label: 'Student' },
   parent: { component: Parent, label: 'Parent' },
@@ -54,7 +55,7 @@ const SCREENS = {
 // thing on screen at all times, so it says only what someone would actually
 // want at a glance.
 function EventBar({ route, navigate }) {
-  const { mode, counts, live } = useVerifi();
+  const { mode, counts, live, eventActive } = useVerifi();
   const isHome = route === 'home';
   const open = counts.pending;
   const done = counts.verified;
@@ -98,7 +99,7 @@ function EventBar({ route, navigate }) {
             opacity: 0.9,
           }}
         >
-          {mode === 'drill' ? 'Drill in progress' : 'Live event'}
+          {!eventActive ? 'No event running' : mode === 'drill' ? 'Drill in progress' : 'Live event'}
         </Text>
         <Text style={{ fontFamily: F.mono, fontSize: 10, color: '#FFFFFF', opacity: 0.6 }}>
           {live ? 'shared board' : 'this phone'} · {SCREENS[route].label}
@@ -146,7 +147,6 @@ function Shell() {
   const [route, setRoute] = useState('splash');
   const navigate = useCallback((next) => setRoute(next), []);
   const { component: Screen, bare } = SCREENS[route];
-  const { notice, clearNotice } = useVerifi();
   // The splash is the one accent-filled screen; the safe area matches it.
   const surface = route === 'splash' ? C.accent : C.paper;
 
@@ -155,15 +155,6 @@ function Shell() {
       {bare ? null : <EventBar route={route} navigate={navigate} />}
       <View style={{ flex: 1 }}>
         <Screen navigate={navigate} />
-        {/* Above every screen: what just happened elsewhere in the building. */}
-        <Notice
-          notice={notice}
-          onDismiss={clearNotice}
-          onPress={() => {
-            clearNotice();
-            navigate('admin');
-          }}
-        />
         {bare || route === 'chat' ? null : <ChatButton onPress={() => navigate('chat')} />}
       </View>
     </SafeAreaView>

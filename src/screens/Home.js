@@ -4,6 +4,7 @@ import { C, F, R, S, T, cardStyle } from '../theme';
 import { StatusDot } from '../components/ui';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
+import Explain from '../components/Explain';
 import Logo from '../components/Logo';
 import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
@@ -24,13 +25,6 @@ const ROLES = [
     title: 'Administrator',
     desc: 'The live count for the whole school, the open cases, and the all clear.',
     cta: 'OPEN THE BOARD',
-  },
-  {
-    id: 'record',
-    icon: 'scan',
-    title: 'Sweep a wing',
-    desc: 'Record the ground you cover while searching, with live distance, pace and a path.',
-    cta: 'RECORD A SWEEP',
   },
   {
     id: 'teacher',
@@ -92,8 +86,10 @@ export default function Home({ navigate }) {
 
   return (
     <ScrollView
+        automaticallyAdjustKeyboardInsets
       contentContainerStyle={{ padding: S.xl, paddingBottom: S.xxl }}
-      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
         <Logo size={44} />
@@ -117,6 +113,8 @@ export default function Home({ navigate }) {
           />
         </Pressable>
       </View>
+
+      <Explain route="home" style={{ marginTop: S.sm }} />
 
       {/* The count answers the only question before anyone taps anything. */}
       <View
@@ -246,7 +244,7 @@ export default function Home({ navigate }) {
         </Text>
 
         <Pressable
-          onPress={eventActive ? endEvent : startNewEvent}
+          onPress={() => (eventActive ? endEvent() : navigate('start'))}
           accessibilityRole="button"
           style={({ pressed }) => ({
             minHeight: 52,
@@ -267,10 +265,30 @@ export default function Home({ navigate }) {
               color: eventActive ? C.ink : '#FFFFFF',
             }}
           >
-            {eventActive ? 'End the event' : 'Start an event'}
+            {eventActive ? 'End the event' : 'Start an event, administrators only'}
           </Text>
         </Pressable>
       </View>
+
+      <Pressable
+        onPress={() => navigate('ready')}
+        accessibilityRole="button"
+        style={({ pressed }) => ({
+          marginTop: S.md,
+          minHeight: 48,
+          borderRadius: R.card,
+          borderWidth: 1,
+          borderColor: C.rule,
+          backgroundColor: C.card,
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: pressed ? 0.9 : 1,
+        })}
+      >
+        <Text style={{ fontFamily: F.uiSemi, fontSize: 14, color: C.accent }}>
+          Run the ready check
+        </Text>
+      </Pressable>
 
       <Text style={{ fontFamily: F.mono, fontSize: 10, color: C.inkSoft, marginTop: S.xl }}>
         {live

@@ -13,15 +13,24 @@ import { C, F, R, S, T, cardStyle } from '../theme';
 import { Glass, Rule } from '../components/ui';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
+import Explain from '../components/Explain';
 import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
 import { fetchMessages, isConfigured, sendMessage, subscribeToMessages } from '../supabase';
 import { answerInThread } from '../ai';
 
-const PROMPTS = [
-  'Who is still open?',
-  'Where was the last confirmation?',
-  'What should I check next?',
+/**
+ * The thread opens on a set of small boxes, all on one screen, no scrolling.
+ * Each one is a different way to ask, and the assistant answers in that way.
+ * Choosing beats typing when your hands are shaking.
+ */
+const WAYS = [
+  { id: 'open', icon: 'shield', label: 'Who is open', ask: 'Who is still open right now?' },
+  { id: 'where', icon: 'scan', label: 'Where to look', ask: 'Where should I look next, and why?' },
+  { id: 'sum', icon: 'grid', label: 'Sum it up', ask: 'Summarise the board in two sentences.' },
+  { id: 'parents', icon: 'family', label: 'Tell parents', ask: 'What should we tell parents right now?' },
+  { id: 'next', icon: 'check', label: 'What next', ask: 'What is the single next thing a staff member should do?' },
+  { id: 'talk', icon: 'mail', label: 'Talk to staff', ask: null },
 ];
 
 const clock = (iso) =>
@@ -29,9 +38,7 @@ const clock = (iso) =>
 
 function Bubble({ m, mine }) {
   const assistant = m.role === 'assistant';
-  const system = m.role === 'system';
-
-  if (system) {
+  if (m.role === 'system') {
     return (
       <View style={{ alignItems: 'center', paddingVertical: S.md }}>
         <Text style={{ fontFamily: F.mono, fontSize: 11, color: C.inkSoft, textAlign: 'center' }}>
@@ -70,11 +77,6 @@ function Bubble({ m, mine }) {
           }}
         >
           <Text style={{ fontFamily: F.ui, fontSize: 15, lineHeight: 23, color: C.ink }}>{m.body}</Text>
-          {m.place ? (
-            <Text style={{ fontFamily: F.mono, fontSize: 10, color: C.inkSoft, marginTop: S.sm }}>
-              {m.place}
-            </Text>
-          ) : null}
         </View>
       </View>
     );
@@ -85,9 +87,7 @@ function Bubble({ m, mine }) {
       {!mine ? <Avatar name={m.author} seed={m.author} size={32} /> : null}
       <View style={{ flex: 1, alignItems: mine ? 'flex-end' : 'flex-start' }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, marginBottom: 4 }}>
-          <Text style={{ fontFamily: F.uiSemi, fontSize: 12, color: C.ink }}>
-            {mine ? 'You' : m.author}
-          </Text>
+          <Text style={{ fontFamily: F.uiSemi, fontSize: 12, color: C.ink }}>{mine ? 'You' : m.author}</Text>
           <Text style={{ fontFamily: F.mono, fontSize: 10, color: C.inkSoft }}>{clock(m.created_at)}</Text>
         </View>
         <View
@@ -101,32 +101,24 @@ function Bubble({ m, mine }) {
             borderColor: C.rule,
           }}
         >
-          <Text
-            style={{
-              fontFamily: F.ui,
-              fontSize: 15,
-              lineHeight: 22,
-              color: mine ? '#FFFFFF' : C.ink,
-            }}
-          >
+          <Text style={{ fontFamily: F.ui, fontSize: 15, lineHeight: 22, color: mine ? '#FFFFFF' : C.ink }}>
             {m.body}
           </Text>
         </View>
-        {m.place ? (
-          <Text style={{ fontFamily: F.mono, fontSize: 10, color: C.inkSoft, marginTop: 4 }}>{m.place}</Text>
-        ) : null}
       </View>
     </View>
   );
 }
 
 export default function Chat() {
-  const { staffName, counts, all, live, raise, eventActive } = useVerifi();
+  const { staffName, counts, all, raise, eventActive } = useVerifi();
   const { place } = useLiveLocation({ active: eventActive });
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [thinking, setThinking] = useState(false);
   const [status, setStatus] = useState(isConfigured() ? 'loading' : 'this phone only');
+  const [limit, setLimit] = useState(null);
+  const [mode, setMode] = useState(null);
   const scroller = useRef(null);
 
   const toBottom = () => setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 120);
@@ -139,7 +131,6 @@ export default function Chat() {
       if (rows) {
         setMessages(rows);
         setStatus('live');
-        toBottom();
       } else {
         setStatus('messages table not created yet');
       }
@@ -149,14 +140,13 @@ export default function Chat() {
     };
   }, []);
 
-  // Anything anyone types, on any phone, lands here.
   useEffect(() => {
     if (status !== 'live') return undefined;
     return subscribeToMessages((row) => {
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
       toBottom();
       if (row.author !== staffName && row.role === 'staff') {
-        raise({ title: `${row.author}`, detail: row.body, status: 'verified', at: clock(row.created_at) });
+        raise({ key: `msg:${row.id}`, title: row.author, detail: row.body });
       }
     });
   }, [status, staffName, raise]);
@@ -178,97 +168,107 @@ export default function Chat() {
     [staffName, place, status]
   );
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || thinking) return;
+  // Everything said to the assistant gets an answer, whether or not it ends in
+  // a question mark.
+  const askAssistant = useCallback(
+    async (question) => {
+      setThinking(true);
+      const open = all.filter((s) => s.status === 'pending').map((s) => s.name);
+      const lastPlace = all.find((s) => s.place)?.place;
+      const r = await answerInThread({
+        question,
+        board: { verified: counts.verified, pending: counts.pending, absent: counts.absent, open, lastPlace },
+        history: messages.slice(-6),
+      });
+      setThinking(false);
+      if (r.limitReached) setLimit(r.reason);
+      await post(r.text, 'assistant', 'Verifi assistant');
+    },
+    [all, counts, messages, post]
+  );
+
+  const send = async (text, toAssistant) => {
+    const body = (text ?? draft).trim();
+    if (!body || thinking) return;
     setDraft('');
-    await post(text);
-
-    // The assistant answers when spoken to, and stays quiet otherwise.
-    const addressed = /^(verifi|assistant|ai)\b/i.test(text) || text.includes('?');
-    if (!addressed) return;
-
-    setThinking(true);
-    const open = all.filter((s) => s.status === 'pending').map((s) => s.name);
-    const lastPlace = all.find((s) => s.place)?.place;
-    const r = await answerInThread({
-      question: text,
-      board: { verified: counts.verified, pending: counts.pending, absent: counts.absent, open, lastPlace },
-      history: messages.slice(-6),
-    });
-    setThinking(false);
-    await post(r.text, 'assistant', 'Verifi assistant');
+    await post(body);
+    if (toAssistant ?? mode !== 'talk') await askAssistant(body);
   };
+
+  const started = messages.some((m) => m.role !== 'system') || mode;
 
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={26}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 44 : 0}
     >
-      <View style={{ paddingHorizontal: S.xl, paddingTop: S.lg, paddingBottom: S.md }}>
+      <View style={{ paddingHorizontal: S.xl, paddingTop: S.lg, paddingBottom: S.sm }}>
         <Text style={T.title}>Messages</Text>
-        <Text style={[T.small, { marginTop: 2 }]}>
-          {status === 'live'
-            ? 'Every phone in the building shares this thread.'
-            : status === 'loading'
-            ? 'Opening the thread'
-            : `On this phone only, ${status}`}
-        </Text>
+        <Explain route="chat" />
       </View>
       <Rule />
 
-      <ScrollView
-        ref={scroller}
-        contentContainerStyle={{ padding: S.xl, paddingBottom: S.md }}
-        showsVerticalScrollIndicator={false}
-        onContentSizeChange={toBottom}
-      >
-        {messages.length === 0 ? (
-          <View style={[cardStyle, { padding: S.lg, gap: S.sm }]}>
-            <Text style={{ fontFamily: F.serif, fontSize: 17, lineHeight: 25, color: C.ink }}>
-              Nothing yet.
-            </Text>
-            <Text style={T.small}>
-              Anything typed here reaches every phone in the building. Ask a question and the assistant
-              answers from the board.
-            </Text>
+      {/* One screen of small boxes. Pick how you want the answer. */}
+      {!started ? (
+        <View style={{ flex: 1, padding: S.lg, justifyContent: 'center' }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.md, justifyContent: 'center' }}>
+            {WAYS.map((w) => (
+              <Pressable
+                key={w.id}
+                accessibilityRole="button"
+                onPress={() => {
+                  setMode(w.id);
+                  if (w.ask) send(w.ask, true);
+                }}
+                style={({ pressed }) => [
+                  cardStyle,
+                  {
+                    width: '46%',
+                    aspectRatio: 1.15,
+                    padding: S.md,
+                    justifyContent: 'space-between',
+                    borderColor: pressed ? C.accent : C.rule,
+                    opacity: pressed ? 0.9 : 1,
+                  },
+                ]}
+              >
+                <Icon name={w.icon} size={22} />
+                <Text style={{ fontFamily: F.uiSemi, fontSize: 15, color: C.ink }}>{w.label}</Text>
+              </Pressable>
+            ))}
           </View>
-        ) : (
-          messages.map((m) => <Bubble key={m.id} m={m} mine={m.role === 'staff' && m.author === staffName} />)
-        )}
-
-        {thinking ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, marginBottom: S.lg }}>
-            <ActivityIndicator size="small" color={C.accent} />
-            <Text style={[T.small, { color: C.inkSoft }]}>Assistant is reading the board</Text>
-          </View>
-        ) : null}
-      </ScrollView>
-
-      {/* Suggested questions, the way a person actually asks them. */}
-      <View style={{ paddingHorizontal: S.xl, paddingBottom: S.sm }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: S.sm }}>
-          {PROMPTS.map((p) => (
-            <Pressable
-              key={p}
-              onPress={() => setDraft(p)}
-              accessibilityRole="button"
-              style={({ pressed }) => ({
-                paddingHorizontal: S.md,
-                minHeight: 36,
-                justifyContent: 'center',
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: C.rule,
-                backgroundColor: pressed ? C.paper : C.card,
-              })}
-            >
-              <Text style={{ fontFamily: F.uiMed, fontSize: 13, color: C.inkSoft }}>{p}</Text>
-            </Pressable>
+          <Text style={[T.small, { textAlign: 'center', marginTop: S.lg, fontSize: 12 }]}>
+            Pick one, or type below to reach every phone in the building.
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          ref={scroller}
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ padding: S.xl, paddingBottom: S.md }}
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={toBottom}
+        >
+          {messages.map((m) => (
+            <Bubble key={m.id} m={m} mine={m.role === 'staff' && m.author === staffName} />
           ))}
+          {thinking ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, marginBottom: S.lg }}>
+              <ActivityIndicator size="small" color={C.accent} />
+              <Text style={[T.small]}>Assistant is reading the board</Text>
+            </View>
+          ) : null}
+          {limit ? (
+            <View style={{ backgroundColor: 'rgba(185,133,36,0.09)', borderRadius: 10, padding: S.md }}>
+              <Text style={[T.small, { color: C.ink }]}>
+                The assistant is {limit}. The board, the scanning, and every count are unaffected.
+              </Text>
+            </View>
+          ) : null}
         </ScrollView>
-      </View>
+      )}
 
       <Glass
         intensity={60}
@@ -286,21 +286,14 @@ export default function Chat() {
         <TextInput
           value={draft}
           onChangeText={setDraft}
-          onSubmitEditing={send}
-          placeholder="Message the school, or ask a question"
+          onSubmitEditing={() => send()}
+          placeholder={mode === 'talk' ? 'Message every phone' : 'Ask the assistant, or tell the school'}
           placeholderTextColor={C.absent}
           multiline
-          style={{
-            flex: 1,
-            fontFamily: F.ui,
-            fontSize: 15,
-            color: C.ink,
-            paddingVertical: S.md,
-            maxHeight: 90,
-          }}
+          style={{ flex: 1, fontFamily: F.ui, fontSize: 15, color: C.ink, paddingVertical: S.md, maxHeight: 90 }}
         />
         <Pressable
-          onPress={send}
+          onPress={() => send()}
           disabled={!draft.trim()}
           accessibilityRole="button"
           accessibilityLabel="Send"

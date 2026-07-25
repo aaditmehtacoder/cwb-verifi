@@ -2,9 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { C, F, R, S, T, cardStyle } from '../theme';
 import { Button, Chip, Counter, FloatingBar, Rule, Sheet, StatusDot } from '../components/ui';
+import Explain from '../components/Explain';
 import { AccountabilityField } from '../components/Field';
 import Avatar from '../components/Avatar';
-import { CONFLICTS, EVIDENCE, STAFF, SUGGESTION, TEMPLATES } from '../data';
+import { CONFLICTS, EVIDENCE, MAYA, STAFF, SUGGESTION, TEMPLATES } from '../data';
+
+const MAYA_ID = MAYA.id;
 import { useVerifi } from '../store';
 import { budget, suggestWhereToLook } from '../ai';
 
@@ -163,7 +166,7 @@ function Panel({ title, children, style }) {
 }
 
 export default function Admin({ navigate }) {
-  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, reset, endEvent, elapsed, confirmStudent, staffName } = useVerifi();
+  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, reset, endEvent, elapsed, confirmStudent, staffName, consent, askStudentForLocation } = useVerifi();
   const [tile, setTile] = useState(null);
   const [more, setMore] = useState(false);
   const [query, setQuery] = useState('');
@@ -182,7 +185,8 @@ export default function Admin({ navigate }) {
 
   return (
     <View style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={{ padding: S.xl, paddingBottom: 120 }} keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
           <View style={{ flex: 1 }}>
@@ -215,6 +219,7 @@ export default function Admin({ navigate }) {
           <CountBlock label="Reunified" value={counts.reunified} color={C.inkSoft} />
         </View>
         <StackedBar counts={counts} />
+        <Explain route="admin" />
 
         {/* The accountability field */}
         <View style={{ marginTop: S.xl }}>
@@ -278,9 +283,66 @@ export default function Admin({ navigate }) {
             </View>
             <EvidenceTable />
             <SuggestionBlock />
+
+            {/* Asking the student's own phone. It is a request, and a refusal
+                is a perfectly good answer. */}
+            <View
+              style={{
+                marginTop: S.md,
+                borderWidth: 1,
+                borderColor: C.rule,
+                borderRadius: R.small,
+                padding: S.md,
+                gap: S.sm,
+              }}
+            >
+              <Text style={[T.label, { fontSize: 10 }]}>Nobody can find her</Text>
+              {consent?.state === 'shared' ? (
+                <>
+                  <Text style={{ fontFamily: F.serif, fontSize: 15, lineHeight: 23, color: C.ink }}>
+                    She agreed to share where she is.
+                  </Text>
+                  <Text style={{ fontFamily: F.mono, fontSize: 12, color: C.inkSoft }}>
+                    {consent.place || 'location received'}
+                  </Text>
+                  <Text style={T.small}>
+                    Send somebody to look. A person still has to see her before the count moves.
+                  </Text>
+                </>
+              ) : consent?.state === 'refused' ? (
+                <>
+                  <Text style={T.small}>
+                    She declined, and nothing was sent. Keep searching the usual way.
+                  </Text>
+                  <Button
+                    title="Ask once more"
+                    variant="secondary"
+                    onPress={() => askStudentForLocation(MAYA_ID, staffName)}
+                  />
+                </>
+              ) : consent?.state === 'asked' ? (
+                <Text style={T.small}>
+                  Asked at {new Date(consent.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.
+                  Waiting for her to answer on her own phone.
+                </Text>
+              ) : (
+                <>
+                  <Text style={T.small}>
+                    Ask her phone where she is. She sees the request and can refuse, and nothing is sent
+                    unless she agrees.
+                  </Text>
+                  <Button
+                    title="Ask her to share her location"
+                    variant="secondary"
+                    onPress={() => askStudentForLocation(MAYA_ID, staffName)}
+                  />
+                </>
+              )}
+            </View>
+
             <Button
               title="Scan to confirm"
-              style={{ marginTop: S.lg }}
+              style={{ marginTop: S.md }}
               onPress={() => navigate('scan')}
             />
           </Panel>

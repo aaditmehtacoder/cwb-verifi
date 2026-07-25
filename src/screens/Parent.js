@@ -3,6 +3,7 @@ import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { C, F, R, S, T, cardStyle } from '../theme';
 import { Button, Rule, Sheet } from '../components/ui';
+import Explain from '../components/Explain';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
 import { LANGUAGES, translator } from '../i18n';

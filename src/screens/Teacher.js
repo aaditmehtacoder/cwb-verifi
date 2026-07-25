@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { C, F, R, S, T, cardStyle } from '../theme';
 import { Button, Check, Chip, Glass, Rule, Sheet, StatusDot } from '../components/ui';
+import Explain from '../components/Explain';
 import Avatar from '../components/Avatar';
 import { OFF_ROSTER } from '../data';
 import { useVerifi } from '../store';
@@ -191,6 +192,7 @@ export default function Teacher({ navigate }) {
             </Pressable>
           </View>
         </View>
+        <Explain route="teacher" />
 
         {/* Sticky bar, frosted so the roster stays faintly visible beneath it */}
         <Glass

@@ -12,28 +12,46 @@
  * the written suggestion and says so.
  */
 
-const KEY = process.env.EXPO_PUBLIC_OPENROUTER_KEY || '';
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const GROQ_KEY = process.env.EXPO_PUBLIC_GROQ_KEY || '';
+const OPENROUTER_KEY = process.env.EXPO_PUBLIC_OPENROUTER_KEY || '';
 
-// Ordered by how well each one held the register in testing. Reasoning models
-// spend tokens before they answer, hence the generous max_tokens below.
-export const MODELS = [
-  'openai/gpt-oss-20b:free',
-  'inclusionai/ling-3.0-flash:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
-  'google/gemma-4-31b-it:free',
-  'nvidia/nemotron-nano-9b-v2:free',
+/**
+ * Providers in the order they are tried.
+ *
+ * Groq first because it answers in under a second, and during an event the
+ * difference between half a second and fifteen is the difference between a
+ * staff member reading the suggestion and giving up on it. OpenRouter's free
+ * models stay behind it as a fallback for when Groq is unreachable.
+ */
+const PROVIDERS = [
+  {
+    name: 'groq',
+    endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+    key: GROQ_KEY,
+    models: ['llama-3.3-70b-versatile', 'openai/gpt-oss-120b', 'llama-3.1-8b-instant'],
+  },
+  {
+    name: 'openrouter',
+    endpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    key: OPENROUTER_KEY,
+    models: ['openai/gpt-oss-20b:free', 'inclusionai/ling-3.0-flash:free'],
+  },
 ];
 
+const available = () => PROVIDERS.filter((p) => p.key && p.key.length > 20);
+
+export const MODELS = PROVIDERS.flatMap((p) => p.models);
+
 // Free tier is metered daily. A drill should never be able to drain it.
-const MAX_CALLS = 12;
+const MAX_CALLS = 40;
+const MAX_MODELS_PER_ASK = 2; // one question should not burn the whole chain
 const TIMEOUT_MS = 20000;
 
 let spent = 0;
 const cache = new Map();
 
 export const budget = () => ({ spent, max: MAX_CALLS, left: Math.max(0, MAX_CALLS - spent) });
-export const hasKey = () => KEY.startsWith('sk-or-');
+export const hasKey = () => available().length > 0;
 
 const SYSTEM = [
   'You help school staff during a student accountability event.',
@@ -72,15 +90,16 @@ export function sanitizeSuggestion(text) {
     : `${t.replace(/\s*$/, '')} A staff member must verify.`;
 }
 
-async function callModel(model, body, signal) {
-  const res = await fetch(ENDPOINT, {
+async function callModel(provider, model, body, signal) {
+  const res = await fetch(provider.endpoint, {
     method: 'POST',
     signal,
     headers: {
-      Authorization: `Bearer ${KEY}`,
+      Authorization: `Bearer ${provider.key}`,
       'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://verifi.local',
-      'X-Title': 'Verifi',
+      ...(provider.name === 'openrouter'
+        ? { 'HTTP-Referer': 'https://verifi.local', 'X-Title': 'Verifi' }
+        : null),
     },
     body: JSON.stringify({ ...body, model }),
   });
@@ -88,7 +107,11 @@ async function callModel(model, body, signal) {
   const json = await res.json().catch(() => null);
   if (!res.ok || json?.error) {
     const code = json?.error?.code || res.status;
-    return { ok: false, code, message: json?.error?.message || `HTTP ${res.status}` };
+    const message = json?.error?.message || `HTTP ${res.status}`;
+    // free-models-per-day is an account limit: every model will refuse, so
+    // there is no point walking the rest of the chain.
+    const accountLimit = /free-models-per-day|per-day/i.test(message);
+    return { ok: false, code, message, accountLimit };
   }
   return { ok: true, text: json?.choices?.[0]?.message?.content || '' };
 }
@@ -124,46 +147,54 @@ export async function suggestWhereToLook({ student, evidence, fallback, force = 
 
   const started = Date.now();
   const problems = [];
+  let attempts = 0;
+  let limitEverywhere = true;
 
-  for (let i = 0; i < MODELS.length; i += 1) {
-    if (spent >= MAX_CALLS) break;
-    const model = MODELS[i];
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    spent += 1;
+  for (const provider of available()) {
+    for (const model of provider.models.slice(0, MAX_MODELS_PER_ASK)) {
+      if (spent >= MAX_CALLS) break;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      spent += 1;
+      attempts += 1;
 
-    try {
-      const r = await callModel(model, body, controller.signal);
-      clearTimeout(timer);
+      try {
+        const r = await callModel(provider, model, body, controller.signal);
+        clearTimeout(timer);
 
-      if (!r.ok) {
-        // 429 is the free tier throttling a provider, the next model is free.
-        problems.push(`${model}: ${r.code}`);
-        continue;
+        if (!r.ok) {
+          // A daily cap on one provider says nothing about the next one.
+          if (!r.accountLimit) limitEverywhere = false;
+          problems.push(`${provider.name}/${model}: ${r.code}`);
+          continue;
+        }
+        limitEverywhere = false;
+        const text = sanitizeSuggestion(r.text);
+        if (!text) {
+          problems.push(`${provider.name}/${model}: unusable output`);
+          continue;
+        }
+        return give({
+          text,
+          model: `${provider.name}/${model}`,
+          ms: Date.now() - started,
+          attempts,
+          source: 'model',
+        });
+      } catch (e) {
+        clearTimeout(timer);
+        limitEverywhere = false;
+        problems.push(`${provider.name}/${model}: ${e.name === 'AbortError' ? 'timeout' : 'network'}`);
       }
-      const text = sanitizeSuggestion(r.text);
-      if (!text) {
-        problems.push(`${model}: unusable output`);
-        continue;
-      }
-      return give({
-        text,
-        model,
-        ms: Date.now() - started,
-        attempts: i + 1,
-        source: 'model',
-      });
-    } catch (e) {
-      clearTimeout(timer);
-      problems.push(`${model}: ${e.name === 'AbortError' ? 'timeout' : 'network'}`);
     }
   }
 
   return give({
     text: fallback,
     source: 'fallback',
-    reason: problems[0] || 'no model responded',
-    attempts: problems.length,
+    reason: limitEverywhere && attempts ? 'out of free requests for today' : problems[0] || 'no model responded',
+    limitReached: limitEverywhere && attempts > 0,
+    attempts,
   });
 }
 
@@ -210,23 +241,42 @@ export async function answerInThread({ question, board, history = [] }) {
   };
 
   const started = Date.now();
-  for (let i = 0; i < MODELS.length; i += 1) {
-    if (spent >= MAX_CALLS) break;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    spent += 1;
-    try {
-      const r = await callModel(MODELS[i], body, controller.signal);
-      clearTimeout(timer);
-      if (!r.ok) continue;
-      const text = sanitizeSuggestion(r.text);
-      if (!text) continue;
-      return { text, model: MODELS[i], ms: Date.now() - started, source: 'model' };
-    } catch {
-      clearTimeout(timer);
+  let attempts = 0;
+  let limitEverywhere = true;
+
+  for (const provider of available()) {
+    for (const model of provider.models.slice(0, MAX_MODELS_PER_ASK)) {
+      if (spent >= MAX_CALLS) break;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      spent += 1;
+      attempts += 1;
+      try {
+        const r = await callModel(provider, model, body, controller.signal);
+        clearTimeout(timer);
+        if (!r.ok) {
+          if (!r.accountLimit) limitEverywhere = false;
+          continue;
+        }
+        limitEverywhere = false;
+        const text = sanitizeSuggestion(r.text);
+        if (!text) continue;
+        return { text, model: `${provider.name}/${model}`, ms: Date.now() - started, source: 'model' };
+      } catch {
+        clearTimeout(timer);
+        limitEverywhere = false;
+      }
     }
   }
-  return { text: fallback, source: 'fallback', reason: 'no model responded' };
+
+  return {
+    text: limitEverywhere && attempts
+      ? 'The assistant is out of free requests for today. The board itself is unaffected.'
+      : fallback,
+    source: 'fallback',
+    reason: limitEverywhere && attempts ? 'out of free requests for today' : 'no model responded',
+    limitReached: limitEverywhere && attempts > 0,
+  };
 }
 
 export function resetCache() {

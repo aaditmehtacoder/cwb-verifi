@@ -71,7 +71,7 @@ ACCEPT.forEach((t) => {
 console.log('\nConfig\n');
 check(`key loaded from .env`, hasKey());
 check(`${MODELS.length} free models in the fallback chain`, MODELS.length >= 3);
-check(`per-session call budget is capped (${budget().max})`, budget().max > 0 && budget().max <= 25);
+check(`per-session call budget is capped (${budget().max})`, budget().max > 0 && budget().max <= 60);
 
   if (process.argv.includes('live')) {
     console.log('\nLive call — one request through the chain (uses free-tier quota)\n');

@@ -87,8 +87,11 @@ export default function SignIn({ navigate }) {
   };
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 44 : 0}
+    >
       <ScrollView
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={{ padding: S.xl, paddingTop: S.xxl, paddingBottom: S.xxl, flexGrow: 1 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}

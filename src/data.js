@@ -103,6 +103,23 @@ export const CONFLICTS = [
   { id: 'c1', text: 'Two rooms report Jordan Pike.', detail: 'Gym and Room 204 both list Jordan Pike as with them.' },
 ];
 
+// The staff who own a room. A teacher signs in as one of these, and only ever
+// sees the students on that roster.
+export const TEACHERS = [
+  { id: 'T-01', name: 'Tomas Whitfield', short: 'T. Whitfield', room: 'Chemistry', subject: 'Chemistry, room 118' },
+  { id: 'T-02', name: 'Dara Okonjo', short: 'D. Okonjo', room: 'Gym', subject: 'Physical education' },
+  { id: 'T-03', name: 'Lucia Marchetti', short: 'L. Marchetti', room: 'Library', subject: 'Library and study hall' },
+  { id: 'T-04', name: 'Kwesi Ansel', short: 'K. Ansel', room: 'Room 204', subject: 'History, room 204' },
+  { id: 'T-05', name: 'Priya Whitcomb', short: 'P. Whitcomb', room: 'Cafeteria', subject: 'Lunch supervision' },
+  { id: 'T-06', name: 'Rosa Alvarez', short: 'R. Alvarez', room: 'Nurse checkpoint', subject: 'School nurse' },
+];
+
+export const ADMIN = { id: 'A-01', name: 'Miriam Osei', short: 'M. Osei', title: 'Principal' };
+
+// The word an administrator types to start an event. One word, easy to say out
+// loud across a room, and it is the only way the count starts moving.
+export const EVENT_PASSWORD = 'cwb';
+
 export const OFF_ROSTER = {
   id: 'S-9042',
   name: 'Devin Okoro',

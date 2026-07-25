@@ -1,8 +1,18 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Text, TextInput, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { C, F, R, S, T, cardStyle } from '../theme';
 import { Button, Check, Rule, StatusDot } from '../components/ui';
+import Explain from '../components/Explain';
 import Avatar from '../components/Avatar';
 import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
@@ -90,7 +100,17 @@ export default function Scan({ navigate }) {
   const noCamera = Platform.OS === 'web';
 
   return (
-    <View style={{ flex: 1, padding: S.xl }}>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 44 : 0}
+    >
+      <ScrollView
+        automaticallyAdjustKeyboardInsets
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ padding: S.xl, paddingBottom: S.xxl }}
+      >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
         <View style={{ flex: 1 }}>
           <Text style={T.title}>Scan a student</Text>
@@ -119,10 +139,11 @@ export default function Scan({ navigate }) {
           </Text>
         </View>
       </View>
+      <Explain route="scan" />
 
       <View
         style={{
-          marginTop: S.lg,
+          marginTop: S.sm,
           height: 300,
           borderRadius: 18,
           overflow: 'hidden',
@@ -278,6 +299,7 @@ export default function Scan({ navigate }) {
           ) : null}
         </View>
       )}
-    </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

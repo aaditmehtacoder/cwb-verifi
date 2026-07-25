@@ -2,9 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import QRCode from 'react-native-qrcode-svg';
-import { C, F, S, T } from '../theme';
+import { C, F, R as RAD, S, T, cardStyle } from '../theme';
 import { Button, Sheet } from '../components/ui';
+import Explain from '../components/Explain';
+import Icon from '../components/Icon';
 import { MAYA } from '../data';
+import { useVerifi } from '../store';
+import { useLiveLocation } from '../location';
 
 const R = 20;
 const CIRC = 2 * Math.PI * R;
@@ -57,6 +61,12 @@ function useCode() {
 export default function Student() {
   const [open, setOpen] = useState(false);
   const { code, seconds } = useCode();
+  const { consent, answerConsent, eventActive } = useVerifi();
+  const { place, start: askLocation } = useLiveLocation({ active: eventActive });
+
+  // The school is asking this phone where it is. Nothing leaves the device
+  // unless the student taps yes.
+  const asked = consent?.studentId === MAYA.id && consent?.state === 'asked';
 
   // A real QR, not a picture of one, staff scan this with the camera.
   const payload = `VERIFI:${MAYA.id}:${code}`;
@@ -69,6 +79,51 @@ export default function Student() {
       </Text>
 
       <Button title="Show my code" onPress={() => setOpen(true)} style={{ marginTop: S.xxl, minWidth: 220 }} />
+
+      {asked ? (
+        <View style={[cardStyle, { marginTop: S.xxl, padding: S.lg, gap: S.md, width: '100%' }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
+            <Icon name="shield" size={24} color={C.pending} />
+            <View style={{ flex: 1 }}>
+              <Text style={[T.heading, { fontSize: 17 }]}>The school is looking for you</Text>
+              <Text style={[T.small, { marginTop: 2 }]}>
+                {consent.by} asked if you will share where you are, just for this emergency.
+              </Text>
+            </View>
+          </View>
+
+          <Text style={T.small}>
+            If you say yes, staff see the part of the building you are in until the event ends. If you say
+            no, nothing is sent and nobody is told off. Either way, stay where it is safe.
+          </Text>
+
+          <Button
+            title="Yes, share where I am"
+            onPress={async () => {
+              await askLocation();
+              answerConsent(MAYA.id, true, place || 'sharing, waiting for a fix');
+            }}
+          />
+          <Button
+            title="No, do not share"
+            variant="secondary"
+            onPress={() => answerConsent(MAYA.id, false)}
+          />
+        </View>
+      ) : null}
+
+      {consent?.studentId === MAYA.id && consent?.state === 'shared' ? (
+        <Text style={[T.small, { marginTop: S.xl, textAlign: 'center' }]}>
+          You are sharing your location with staff until this event ends.
+        </Text>
+      ) : null}
+      {consent?.studentId === MAYA.id && consent?.state === 'refused' ? (
+        <Text style={[T.small, { marginTop: S.xl, textAlign: 'center' }]}>
+          You said no. Nothing was sent.
+        </Text>
+      ) : null}
+
+      <Explain route="student" style={{ marginTop: S.xl }} />
 
       <Sheet visible={open} onClose={() => setOpen(false)} title="Your code">
         <View style={{ alignItems: 'center' }}>

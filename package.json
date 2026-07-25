@@ -10,7 +10,8 @@
     "qr": "node scripts/qr.js",
     "tunnel": "expo start --port 8081 --tunnel",
     "lan": "expo start --port 8081",
-    "ai:check": "node scripts/ai-check.js"
+    "ai:check": "node scripts/ai-check.js",
+    "reset": "node scripts/reset.js"
   },
   "dependencies": {
     "@expo-google-fonts/archivo": "^0.2.3",
@@ -24,13 +25,11 @@
     "expo-asset": "~12.0.13",
     "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
-    "expo-file-system": "~19.0.23",
     "expo-font": "~14.0.12",
     "expo-haptics": "~15.0.8",
     "expo-linking": "~8.0.12",
     "expo-location": "~19.0.8",
     "expo-notifications": "~0.32.17",
-    "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-web-browser": "~15.0.11",
     "react": "19.1.0",

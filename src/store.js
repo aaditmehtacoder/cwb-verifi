@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
-import { CLUSTERS, MAYA, OFF_ROSTER } from './data';
+import { CLUSTERS, EVENT_PASSWORD, MAYA, OFF_ROSTER, TEACHERS } from './data';
 import { describe, getFixOnce } from './location';
 import { notify, prepareNotifications } from './notifications';
 import {
@@ -12,6 +12,7 @@ import {
   isConfigured,
   logScan,
   pushConfirmation,
+  sendMessage,
   staffNameFrom,
   subscribeToBoard,
 } from './supabase';
@@ -67,7 +68,11 @@ export function VerifiProvider({ children }) {
   const [allClear, setAllClear] = useState(false);
   const [announcement, setAnnouncement] = useState(null);
   const [startedAt, setStartedAt] = useState(() => new Date().toISOString());
-  const [eventActive, setEventActive] = useState(true);
+  // Nothing runs until an administrator starts it.
+  const [eventActive, setEventActive] = useState(false);
+  const [startedBy, setStartedBy] = useState(null);
+  const [teacherId, setTeacherId] = useState(TEACHERS[0].id);
+  const [consent, setConsent] = useState(null);
   const [elapsed, setElapsed] = useState('00:00');
   const [loaded, setLoaded] = useState(false);
 
@@ -75,7 +80,6 @@ export function VerifiProvider({ children }) {
   const [meId, setMeId] = useState(MAYA.id);
 
   const [board, setBoard] = useState(isConfigured() ? 'connecting' : 'this phone only');
-  const [notice, setNotice] = useState(null);
   const [user, setUser] = useState(null);
   const live = board === 'live';
   const liveRef = useRef(false);
@@ -83,10 +87,18 @@ export function VerifiProvider({ children }) {
 
   const all = useMemo(() => clusters.flatMap((c) => c.students), [clusters]);
 
+  const raiseRef = useRef(null);
+
+  /**
+   * One fact, one notification, delivered by the operating system.
+   * `key` is the fact itself, so the same confirmation arriving twice over
+   * realtime does not buzz a teacher twice.
+   */
   const raise = useCallback((n) => {
-    setNotice({ ...n, key: `${n.title}:${Date.now()}` });
-    if (n.system !== false) notify(n.title, n.detail || '');
+    notify(n.title, n.detail || '', n.key);
   }, []);
+
+  raiseRef.current = raise;
 
   useEffect(() => {
     prepareNotifications();
@@ -104,6 +116,8 @@ export function VerifiProvider({ children }) {
           if (saved?.mode) setMode(saved.mode);
           if (saved?.meId) setMeId(saved.meId);
           if (typeof saved?.eventActive === 'boolean') setEventActive(saved.eventActive);
+          if (saved?.startedBy) setStartedBy(saved.startedBy);
+          if (saved?.teacherId) setTeacherId(saved.teacherId);
         }
       } catch {
         /* first run */
@@ -115,8 +129,8 @@ export function VerifiProvider({ children }) {
   // Closing the app mid-drill must not lose who has been confirmed.
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(SAVE_KEY, JSON.stringify({ clusters, startedAt, mode, meId, eventActive })).catch(() => {});
-  }, [clusters, startedAt, mode, meId, eventActive, loaded]);
+    AsyncStorage.setItem(SAVE_KEY, JSON.stringify({ clusters, startedAt, mode, meId, eventActive, startedBy, teacherId })).catch(() => {});
+  }, [clusters, startedAt, mode, meId, eventActive, startedBy, teacherId, loaded]);
 
   // ── The shared board ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -158,11 +172,9 @@ export function VerifiProvider({ children }) {
         setRingingId(row.id);
         setTimeout(() => setRingingId(null), 1400);
         raise({
+          key: `confirmed:${row.id}`,
           title: `${row.name} confirmed`,
           detail: [row.confirmed_by, row.place].filter(Boolean).join(' · ') || 'by a staff member',
-          status: 'verified',
-          at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          studentId: row.id,
         });
       }
     });
@@ -188,7 +200,9 @@ export function VerifiProvider({ children }) {
     setClusters((prev) =>
       prev.map((cl) => ({
         ...cl,
-        students: cl.students.map((s) => (s.id === studentId ? { ...s, status, ...extra } : s)),
+        students: cl.students.map((s) =>
+          s.id === studentId ? { ...s, ...(status ? { status } : null), ...extra } : s
+        ),
       }))
     );
   }, []);
@@ -212,10 +226,9 @@ export function VerifiProvider({ children }) {
       const remaining = all.filter((s) => s.status === 'pending' && s.id !== studentId).length;
       if (remaining === 0) {
         raise({
+          key: `allclear:${startedAt}`,
           title: 'Every student accounted for',
           detail: `${counts.verified + 1} confirmed by a person`,
-          status: 'verified',
-          at: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         });
       }
 
@@ -274,6 +287,45 @@ export function VerifiProvider({ children }) {
     [staffName]
   );
 
+  /**
+   * Only an administrator starts an event, and only with the word. Everything
+   * else in the app stays inert until this returns true: no location, no count
+   * moving, no alerts.
+   */
+  const startEvent = useCallback(
+    async ({ password, by = 'An administrator', kind = 'drill' }) => {
+      if (String(password || '').trim().toLowerCase() !== EVENT_PASSWORD) {
+        return { ok: false, reason: 'That is not the start word.' };
+      }
+      buzz('weighty');
+      const startedAtNow = new Date().toISOString();
+      setClusters(clone(CLUSTERS));
+      setStartedAt(startedAtNow);
+      setAllClear(false);
+      setAnnouncement(null);
+      setRingingId(null);
+      setMode(kind);
+      setStartedBy(by);
+      setEventActive(true);
+
+      const line =
+        kind === 'drill'
+          ? `Drill started by ${by}. Confirm your room and report anything unusual here.`
+          : `Lockdown started by ${by}. Confirm your room now.`;
+
+      raiseRef.current?.({
+        key: `started:${startedAtNow}`,
+        title: kind === 'drill' ? 'Drill started' : 'Lockdown started',
+        detail: `by ${by}. Confirm your room.`,
+      });
+
+      // Every other phone learns from the thread, which they are all watching.
+      if (liveRef.current) await sendMessage({ author: by, role: 'system', body: line });
+      return { ok: true };
+    },
+    []
+  );
+
   const startNewEvent = useCallback(() => {
     buzz('weighty');
     setClusters(clone(CLUSTERS));
@@ -285,11 +337,66 @@ export function VerifiProvider({ children }) {
   }, []);
 
   // Ending the event is what switches location off across every screen.
-  const endEvent = useCallback(() => {
-    buzz('weighty');
-    setEventActive(false);
-    setAllClear(false);
-  }, []);
+  const endEvent = useCallback(
+    async ({ by = 'An administrator' } = {}) => {
+      buzz('weighty');
+      setEventActive(false);
+      setAllClear(false);
+      setStartedBy(null);
+      if (liveRef.current) {
+        await sendMessage({ author: by, role: 'system', body: `Event ended by ${by}.` });
+      }
+    },
+    []
+  );
+
+  /**
+   * A student is missing and nobody can find them. An administrator can ask
+   * that student's own phone where it is. The request is exactly that: a
+   * request. It travels down the shared thread, the student's screen shows it,
+   * and nothing at all is sent unless they agree.
+   */
+  const askStudentForLocation = useCallback(
+    async (studentId, byWho) => {
+      const who = byWho || staffName;
+      setConsent({ studentId, by: who, at: Date.now(), state: 'asked' });
+      raiseRef.current?.({
+        key: `consent-ask:${studentId}:${Date.now()}`,
+        title: 'Location requested',
+        detail: `${who} asked the student to share where they are`,
+      });
+      if (liveRef.current) {
+        await sendMessage({
+          author: who,
+          role: 'system',
+          body: `CONSENT_ASK:${studentId}:${who}`,
+        });
+      }
+      return { ok: true };
+    },
+    [staffName]
+  );
+
+  /** The student's answer. Refusing is a first class outcome, not a failure. */
+  const answerConsent = useCallback(
+    async (studentId, agreed, place) => {
+      setConsent((c) => (c && c.studentId === studentId ? { ...c, state: agreed ? 'shared' : 'refused', place } : c));
+      if (agreed && place) setStatus(studentId, undefined, { sharedPlace: place });
+      raiseRef.current?.({
+        key: `consent-answer:${studentId}:${agreed}`,
+        title: agreed ? 'Student shared their location' : 'Student declined',
+        detail: agreed ? place || 'location received' : 'nothing was sent',
+      });
+      if (liveRef.current) {
+        await sendMessage({
+          author: 'Student device',
+          role: 'system',
+          body: agreed ? `CONSENT_SHARED:${studentId}:${place || 'unknown'}` : `CONSENT_REFUSED:${studentId}`,
+        });
+      }
+    },
+    [setStatus]
+  );
 
   const value = useMemo(
     () => ({
@@ -306,15 +413,22 @@ export function VerifiProvider({ children }) {
       setAnnouncement,
       confirmStudent,
       markNotWithClass,
-      notice,
-      clearNotice: () => setNotice(null),
+      consent,
+      askStudentForLocation,
+      answerConsent,
       raise,
       undoConfirm,
       addOffRoster,
       setStatus,
       startNewEvent,
+      startEvent,
       endEvent,
       eventActive,
+      startedBy,
+      teachers: TEACHERS,
+      teacherId,
+      setTeacherId,
+      teacher: TEACHERS.find((t) => t.id === teacherId) || TEACHERS[0],
       reset: startNewEvent,
       elapsed,
       startedAt,
@@ -329,7 +443,7 @@ export function VerifiProvider({ children }) {
       buzz,
       maya: all.find((s) => s.id === MAYA.id),
     }),
-    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, notice, raise, confirmStudent, markNotWithClass, undoConfirm, addOffRoster, setStatus, startNewEvent, endEvent, eventActive, elapsed, startedAt, board, live, user, staffName, me, meId]
+    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, markNotWithClass, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
   );
 
   return <VerifiContext.Provider value={value}>{children}</VerifiContext.Provider>;
