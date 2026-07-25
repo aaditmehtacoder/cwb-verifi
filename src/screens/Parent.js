@@ -7,6 +7,7 @@ import Explain from '../components/Explain';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
 import { LANGUAGES, translator } from '../i18n';
+import { guardianCodeFor, spaced } from '../data';
 import { useVerifi } from '../store';
 import { useReducedMotion } from '../motion';
 
@@ -74,10 +75,16 @@ export default function Parent() {
   const seconds = useTicker();
   const t = translator(lang.code);
 
-  const confirmed = maya?.status === 'verified' || maya?.status === 'reunified';
+  const released = maya?.status === 'reunified';
+  const confirmed = maya?.status === 'verified' || released;
   const when = maya?.confirmedAt
     ? ` ${new Date(maya.confirmedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
     : '';
+
+  // The pass code, derived from the student the same way the gate derives it,
+  // so the two always agree without either one being told what the other holds.
+  const studentId = maya?.id || 'S-1007';
+  const passCode = maya?.guardianCode || guardianCodeFor(studentId);
 
   return (
     <View style={{ flex: 1 }}>
@@ -119,19 +126,23 @@ export default function Parent() {
             <View style={[cardStyle, { padding: S.xl }]}>
               {/* Serif: a person vouched for this. */}
               <Text style={{ fontFamily: F.serif, fontSize: 24, lineHeight: 33, color: C.ink }}>
-                {t('verified', { name: CHILD })}
+                {released ? t('released', { name: CHILD }) : t('verified', { name: CHILD })}
               </Text>
               <Rule style={{ marginVertical: S.lg }} />
               <Text style={{ fontFamily: F.uiMed, fontSize: 15, color: C.ink }}>
-                {t('confirmedBy', { who: maya?.confirmedBy || 'school staff', when })}
+                {released
+                  ? t('releasedBody', { who: maya?.confirmedBy || 'school staff', when })
+                  : t('confirmedBy', { who: maya?.confirmedBy || 'school staff', when })}
               </Text>
-              <Text style={[T.small, { marginTop: S.md }]}>{t('locationNote')}</Text>
+              {!released ? <Text style={[T.small, { marginTop: S.md }]}>{t('locationNote')}</Text> : null}
             </View>
 
-            <View style={[cardStyle, { padding: S.lg, marginTop: S.md, gap: S.sm }]}>
-              <Text style={T.label}>{t('nextTitle')}</Text>
-              <Text style={T.small}>{t('nextBody')}</Text>
-            </View>
+            {!released ? (
+              <View style={[cardStyle, { padding: S.lg, marginTop: S.md, gap: S.sm }]}>
+                <Text style={T.label}>{t('nextTitle')}</Text>
+                <Text style={T.small}>{t('nextBody')}</Text>
+              </View>
+            ) : null}
           </View>
         ) : (
           <View style={{ alignItems: 'center', paddingTop: S.xl }}>
@@ -152,59 +163,82 @@ export default function Parent() {
         )}
 
         {/* A parent on their way is information the school needs, and it never
-            changes the child's status. Only a staff member does that. */}
-        <View style={[cardStyle, { marginTop: S.md, padding: S.lg, gap: S.md }]}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
-            <Icon name="family" size={22} />
-            <View style={{ flex: 1 }}>
-              <Text style={[T.heading, { fontSize: 16 }]}>
-                {onTheWay ? t('checkedIn') : t('checkInTitle')}
-              </Text>
+            changes the child's status. Only a staff member does that. Once the
+            child has actually been handed over there is nothing left to ask
+            for, so the whole block goes away rather than sitting there stale. */}
+        {!released ? (
+          <View style={[cardStyle, { marginTop: S.md, padding: S.lg, gap: S.md }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
+              <Icon name="family" size={22} />
+              <View style={{ flex: 1 }}>
+                <Text style={[T.heading, { fontSize: 16 }]}>
+                  {onTheWay ? t('checkedIn') : t('checkInTitle')}
+                </Text>
+              </View>
             </View>
-          </View>
-          <Text style={T.small}>{onTheWay ? t('checkedInBody', { name: CHILD }) : t('checkInBody')}</Text>
+            <Text style={T.small}>{onTheWay ? t('checkedInBody', { name: CHILD }) : t('checkInBody')}</Text>
 
-          {onTheWay ? (
-            <View style={{ alignItems: 'center', gap: S.md, marginTop: S.sm }}>
-              <View
-                style={{
-                  padding: S.md,
-                  backgroundColor: '#FFFFFF',
-                  borderWidth: 1,
-                  borderColor: C.rule,
-                  borderRadius: 12,
-                }}
-              >
-                <QRCode
-                  value={`VERIFI-GUARDIAN:${maya?.id || 'S-1007'}:704331`}
-                  size={140}
-                  color={C.ink}
-                  backgroundColor="#FFFFFF"
-                />
-              </View>
-              <Text style={{ fontFamily: F.monoMed, fontSize: 17, color: C.ink, letterSpacing: 2 }}>
-                704 331
-              </Text>
-              <Text style={[T.small, { textAlign: 'center' }]}>{t('passNote', { name: CHILD })}</Text>
-              <View style={{ flexDirection: 'row', gap: S.xl, alignSelf: 'stretch', paddingTop: S.sm }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={T.label}>{t('queue')}</Text>
-                  <Text style={{ fontFamily: F.monoSemi, fontSize: 20, color: C.ink, marginTop: 2 }}>
-                    #12 / 34
+            {onTheWay ? (
+              <View style={{ alignItems: 'center', gap: S.md, marginTop: S.sm }}>
+                {/* A real QR the gate actually reads, not a picture of one. The
+                    staff camera parses this exact string, checks the code
+                    against the student, and shows who is allowed to collect. */}
+                <View
+                  style={{
+                    padding: S.md,
+                    backgroundColor: '#FFFFFF',
+                    borderWidth: 1,
+                    borderColor: C.rule,
+                    borderRadius: 12,
+                  }}
+                >
+                  <QRCode
+                    value={`VERIFI-GUARDIAN:${studentId}:${passCode}`}
+                    size={150}
+                    color={C.ink}
+                    backgroundColor="#FFFFFF"
+                  />
+                </View>
+
+                <View style={{ alignItems: 'center' }}>
+                  <Text style={[T.label, { fontSize: 10 }]}>{t('passCode')}</Text>
+                  <Text
+                    style={{
+                      fontFamily: F.monoSemi,
+                      fontSize: 24,
+                      color: C.ink,
+                      letterSpacing: 3,
+                      marginTop: 2,
+                    }}
+                  >
+                    {spaced(passCode)}
                   </Text>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={T.label}>{t('wait')}</Text>
-                  <Text style={{ fontFamily: F.monoSemi, fontSize: 20, color: C.ink, marginTop: 2 }}>
-                    18 min
-                  </Text>
+
+                {/* Screens crack, brightness dies, gates are in the rain. */}
+                <Text style={[T.small, { textAlign: 'center', fontSize: 12 }]}>{t('passSpoken')}</Text>
+                <Text style={[T.small, { textAlign: 'center' }]}>{t('passNote', { name: CHILD })}</Text>
+
+                <View style={{ flexDirection: 'row', gap: S.xl, alignSelf: 'stretch', paddingTop: S.sm }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={T.label}>{t('queue')}</Text>
+                    <Text style={{ fontFamily: F.monoSemi, fontSize: 20, color: C.ink, marginTop: 2 }}>
+                      #12 / 34
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={T.label}>{t('wait')}</Text>
+                    <Text style={{ fontFamily: F.monoSemi, fontSize: 20, color: C.ink, marginTop: 2 }}>
+                      18 min
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          ) : (
-            <Button title={t('checkInAction', { name: CHILD })} onPress={() => setOnTheWay(true)} />
-          )}
-        </View>
+            ) : (
+              <Button title={t('checkInAction', { name: CHILD })} onPress={() => setOnTheWay(true)} />
+            )}
+          </View>
+        ) : null}
 
         <Text style={[T.small, { fontSize: 12, textAlign: 'center', marginTop: S.xl }]}>{t('trust')}</Text>
       </ScrollView>

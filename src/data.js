@@ -51,6 +51,40 @@ function initials(name) {
     .toUpperCase();
 }
 
+const numberIn = (id) => parseInt(String(id).replace(/\D/g, ''), 10) || 0;
+
+/**
+ * The code a student is expected to know by heart.
+ *
+ * The six digits on the student screen rotate every thirty seconds, which is
+ * exactly right while a phone is in a hand and worthless the moment it is not.
+ * A flat battery, a phone in a locker, a phone confiscated that morning, a
+ * student who never carries one: those are the ordinary cases, not the edge
+ * cases. So every student also carries one fixed code, learned the way a locker
+ * combination is learned, and reciting it out loud is enough for a staff member
+ * to be sure they have the right child.
+ *
+ * It is derived rather than stored so the app and the database agree without a
+ * seeding step ever running. `supabase/schema.sql` reproduces this arithmetic
+ * verbatim, so both sides always land on the same number. A real deployment
+ * issues random codes and stores only a hash of each, which is the one thing
+ * that must change before this leaves a demo.
+ */
+export function codeFor(id) {
+  return String(100000 + ((numberIn(id) * 7919) % 900000));
+}
+
+/**
+ * The code on a guardian's pickup pass. Different multiplier, so knowing a
+ * student's own code never yields the code that releases them.
+ */
+export function guardianCodeFor(id) {
+  return String(100000 + ((numberIn(id) * 6271) % 900000));
+}
+
+/** 874 433, the way a person reads it aloud. */
+export const spaced = (code) => `${String(code).slice(0, 3)} ${String(code).slice(3)}`;
+
 function buildClusters() {
   let i = 0;
   let id = 1000;
@@ -60,11 +94,14 @@ function buildClusters() {
       const name = NAMES[i];
       i += 1;
       id += 7;
+      const sid = `S-${id}`;
       students.push({
-        id: `S-${id}`,
+        id: sid,
         name,
         initials: initials(name),
         cluster: plan.name,
+        code: codeFor(sid),
+        guardianCode: guardianCodeFor(sid),
         // Maya Reyes is the one student the field is waiting on.
         status: plan.name === 'Absent' ? 'absent' : name === 'Maya Reyes' ? 'pending' : 'verified',
       });
@@ -125,8 +162,26 @@ export const OFF_ROSTER = {
   name: 'Devin Okoro',
   initials: 'DO',
   cluster: 'Gym',
+  code: codeFor('S-9042'),
+  guardianCode: guardianCodeFor('S-9042'),
   status: 'verified',
 };
+
+/**
+ * The adults allowed to collect a student.
+ *
+ * Reunification is the part of an event that goes wrong quietly: a child handed
+ * to the wrong adult is a worse outcome than a slow queue, and it is the one
+ * mistake that cannot be undone afterwards. So the pass a guardian carries is
+ * checked against this list by name, and the release is still a person looking
+ * at a person, exactly like every other confirmation in this product.
+ */
+export const GUARDIANS = [
+  { studentId: MAYA.id, name: 'Elena Reyes', relation: 'Mother', phone: '(503) 555-0148' },
+  { studentId: MAYA.id, name: 'Victor Reyes', relation: 'Father', phone: '(503) 555-0192' },
+];
+
+export const guardiansFor = (studentId) => GUARDIANS.filter((g) => g.studentId === studentId);
 
 export const TEMPLATES = [
   {

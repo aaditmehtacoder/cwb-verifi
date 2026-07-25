@@ -39,6 +39,12 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Verifi records where a staff member confirmed a student, so the board shows where each person was accounted for."
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#124F4C"
+        }
       ]
     ],
     "scheme": "verifi",

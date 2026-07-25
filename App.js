@@ -18,7 +18,7 @@ import { C, F, S } from './src/theme';
 import { VerifiProvider, useVerifi } from './src/store';
 import Icon from './src/components/Icon';
 import Logo from './src/components/Logo';
-import { Check } from './src/components/ui';
+import { Ambient, Check } from './src/components/ui';
 import ChatButton from './src/components/ChatButton';
 import Splash from './src/screens/Splash';
 import Onboarding from './src/screens/Onboarding';
@@ -153,10 +153,18 @@ function Shell() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: surface }} edges={['top', 'bottom']}>
       {bare ? null : <EventBar route={route} navigate={navigate} />}
-      <View style={{ flex: 1 }}>
-        <Screen navigate={navigate} />
-        {bare || route === 'chat' ? null : <ChatButton onPress={() => navigate('chat')} />}
-      </View>
+      {/* The wash every pane of glass in the app refracts. The splash paints
+          itself accent edge to edge, so it opts out. */}
+      {route === 'splash' ? (
+        <View style={{ flex: 1 }}>
+          <Screen navigate={navigate} />
+        </View>
+      ) : (
+        <Ambient>
+          <Screen navigate={navigate} />
+          {bare || route === 'chat' ? null : <ChatButton onPress={() => navigate('chat')} />}
+        </Ambient>
+      )}
     </SafeAreaView>
   );
 }

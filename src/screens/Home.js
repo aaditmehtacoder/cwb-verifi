@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { C, F, R, S, T, cardStyle } from '../theme';
-import { StatusDot } from '../components/ui';
+import { C, F, R, S, T } from '../theme';
+import { BoxButton, Glass, StatusDot } from '../components/ui';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
 import Explain from '../components/Explain';
@@ -10,71 +10,26 @@ import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
 import { enabledProviders, isConfigured } from '../supabase';
 
-// Who is holding the phone. The order is the order a room needs them in.
+/**
+ * Who is holding the phone.
+ *
+ * Five small boxes on one screen, in the order a room needs them. It used to be
+ * five stacked cards with a paragraph each, which is a reasonable way to explain
+ * a product and a poor way to pick between things during a lockdown. The
+ * sentence that mattered stays under each label; the paragraph moved into the
+ * question mark, where somebody can read it on a quiet Tuesday.
+ */
 const ROLES = [
-  {
-    id: 'scan',
-    icon: 'scan',
-    title: 'Staff',
-    desc: 'Scan a student code with the camera and confirm the person in front of you.',
-    cta: 'SCAN A STUDENT',
-  },
-  {
-    id: 'admin',
-    icon: 'shield',
-    title: 'Administrator',
-    desc: 'The live count for the whole school, the open cases, and the all clear.',
-    cta: 'OPEN THE BOARD',
-  },
-  {
-    id: 'teacher',
-    icon: 'badge',
-    title: 'Teacher',
-    desc: 'Only the students on your own roster, one at a time, on or off the network.',
-    cta: 'TAKE MY ROOM',
-  },
-  {
-    id: 'student',
-    icon: 'check',
-    title: 'Student',
-    desc: 'Show the code staff scan. Nothing else to do, and nothing else to see.',
-    cta: 'SHOW MY CODE',
-  },
-  {
-    id: 'parent',
-    icon: 'family',
-    title: 'Parent',
-    desc: 'One line about your child, the moment a person confirms them.',
-    cta: 'VIEW UPDATES',
-  },
+  { id: 'scan', icon: 'scan', title: 'Staff', sub: 'Scan a student and confirm them' },
+  { id: 'admin', icon: 'shield', title: 'Administrator', sub: 'The whole board, live' },
+  { id: 'teacher', icon: 'badge', title: 'Teacher', sub: 'Your own roster only' },
+  { id: 'student', icon: 'check', title: 'Student', sub: 'Show the code staff scan' },
+  { id: 'parent', icon: 'family', title: 'Parent', sub: 'One line about your child' },
+  { id: 'chat', icon: 'mail', title: 'Messages', sub: 'The thread, and the assistant' },
 ];
 
-function RoleCard({ item, onPress }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${item.title}. ${item.cta}`}
-      style={({ pressed }) => [
-        cardStyle,
-        { padding: S.lg, gap: 6, borderColor: pressed ? C.accent : C.rule, opacity: pressed ? 0.92 : 1 },
-      ]}
-    >
-      <Icon name={item.icon} size={26} />
-      <Text style={[T.heading, { fontSize: 20, marginTop: S.xs }]}>{item.title}</Text>
-      <Text style={[T.small, { lineHeight: 20 }]}>{item.desc}</Text>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.sm, marginTop: S.sm }}>
-        <Text style={{ fontFamily: F.monoMed, fontSize: 12, letterSpacing: 1.2, color: C.accent }}>
-          {item.cta}
-        </Text>
-        <Text style={{ fontFamily: F.monoMed, fontSize: 13, color: C.accent }}>→</Text>
-      </View>
-    </Pressable>
-  );
-}
-
 export default function Home({ navigate }) {
-  const { mode, setMode, counts, board, live, user, staffName, eventActive, startNewEvent, endEvent } = useVerifi();
+  const { mode, setMode, counts, board, live, user, staffName, eventActive, endEvent } = useVerifi();
   const { status: locStatus, place, start: askLocation } = useLiveLocation({ active: eventActive });
   const [providers, setProviders] = useState([]);
 
@@ -86,10 +41,10 @@ export default function Home({ navigate }) {
 
   return (
     <ScrollView
-        automaticallyAdjustKeyboardInsets
-      contentContainerStyle={{ padding: S.xl, paddingBottom: S.xxl }}
+      automaticallyAdjustKeyboardInsets
+      contentContainerStyle={{ padding: S.xl, paddingBottom: 96 }}
       keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+      showsVerticalScrollIndicator={false}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
         <Logo size={44} />
@@ -116,32 +71,46 @@ export default function Home({ navigate }) {
 
       <Explain route="home" style={{ marginTop: S.sm }} />
 
-      {/* The count answers the only question before anyone taps anything. */}
-      <View
-        style={[
-          cardStyle,
-          { marginTop: S.xl, padding: S.lg, flexDirection: 'row', alignItems: 'center', gap: S.md },
-        ]}
+      {/* The count answers the only question anybody has before tapping anything. */}
+      <Glass
+        intensity={30}
+        style={{
+          marginTop: S.md,
+          borderRadius: R.card,
+          padding: S.lg,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: S.md,
+        }}
       >
         <View style={{ flex: 1 }}>
           <Text style={T.label}>Right now</Text>
           <View style={{ flexDirection: 'row', alignItems: 'baseline', marginTop: 4 }}>
             <Text style={{ fontFamily: F.monoSemi, fontSize: 30, color: C.verified }}>{counts.verified}</Text>
             <Text style={{ fontFamily: F.mono, fontSize: 16, color: C.inkSoft }}> / {total}</Text>
-            <Text style={[T.small, { marginLeft: S.sm }]}>confirmed by a person</Text>
+            <Text style={[T.small, { marginLeft: S.sm, flexShrink: 1 }]}>confirmed by a person</Text>
           </View>
         </View>
         {counts.pending > 0 ? <StatusDot status="pending" size={10} /> : null}
-      </View>
+      </Glass>
 
-      <View style={{ marginTop: S.lg, gap: 12 }}>
+      {/* Pick what you are. Two per row, thumb sized, no reading required. */}
+      <Text style={[T.label, { marginTop: S.xl }]}>I am</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: S.md, marginTop: S.sm }}>
         {ROLES.map((r) => (
-          <RoleCard key={r.id} item={r} onPress={() => navigate(r.id)} />
+          <BoxButton
+            key={r.id}
+            width="47.6%"
+            label={r.title}
+            sub={r.sub}
+            icon={(tint) => <Icon name={r.icon} size={24} color={tint} />}
+            onPress={() => navigate(r.id)}
+          />
         ))}
       </View>
 
       {/* Location, for the length of the event and no longer. */}
-      <View style={[cardStyle, { marginTop: S.lg, padding: S.lg, gap: S.md }]}>
+      <Glass intensity={22} style={{ marginTop: S.lg, borderRadius: R.card, padding: S.lg, gap: S.md }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: S.md }}>
           <Icon name="scan" size={22} color={locStatus === 'on' ? C.verified : C.inkSoft} />
           <View style={{ flex: 1 }}>
@@ -149,14 +118,14 @@ export default function Home({ navigate }) {
               {!eventActive
                 ? 'Location is off'
                 : locStatus === 'on'
-                ? 'Location on for this drill'
+                ? 'Location on for this event'
                 : 'Location is off'}
             </Text>
             <Text style={[T.small, { marginTop: 2 }]}>
               {!eventActive
                 ? 'It switches on when an event starts and stops the moment one ends.'
                 : locStatus === 'on'
-                ? `Confirmations are stamped ${place || 'as soon as a fix arrives'}. It stops when the drill ends.`
+                ? `Confirmations are stamped ${place || 'as soon as a fix arrives'}. It stops when the event ends.`
                 : locStatus === 'denied' || locStatus === 'blocked'
                 ? 'Refused. Turn it on in Settings if you want confirmations to carry a place.'
                 : 'Used only to record where a staff member confirmed a student, never to track a child.'}
@@ -180,6 +149,7 @@ export default function Home({ navigate }) {
               borderRadius: R.card,
               borderWidth: 1,
               borderColor: C.rule,
+              backgroundColor: 'rgba(255,255,255,0.7)',
               alignItems: 'center',
               justifyContent: 'center',
               opacity: pressed ? 0.9 : 1,
@@ -188,7 +158,7 @@ export default function Home({ navigate }) {
             <Text style={{ fontFamily: F.uiSemi, fontSize: 14, color: C.accent }}>Allow location</Text>
           </Pressable>
         ) : null}
-      </View>
+      </Glass>
 
       {/* Drill or live. The badge at the top of every screen follows this. */}
       <View style={{ marginTop: S.xl }}>
@@ -197,9 +167,9 @@ export default function Home({ navigate }) {
           style={{
             flexDirection: 'row',
             marginTop: S.sm,
-            backgroundColor: C.card,
+            backgroundColor: 'rgba(255,255,255,0.7)',
             borderWidth: 1,
-            borderColor: C.rule,
+            borderColor: 'rgba(255,255,255,0.9)',
             borderRadius: R.card,
             padding: 4,
             gap: 4,
@@ -252,19 +222,13 @@ export default function Home({ navigate }) {
             borderRadius: R.card,
             borderWidth: 1,
             borderColor: eventActive ? C.rule : C.accent,
-            backgroundColor: eventActive ? C.card : C.accent,
+            backgroundColor: eventActive ? 'rgba(255,255,255,0.75)' : C.accent,
             alignItems: 'center',
             justifyContent: 'center',
             opacity: pressed ? 0.9 : 1,
           })}
         >
-          <Text
-            style={{
-              fontFamily: F.uiSemi,
-              fontSize: 14,
-              color: eventActive ? C.ink : '#FFFFFF',
-            }}
-          >
+          <Text style={{ fontFamily: F.uiSemi, fontSize: 14, color: eventActive ? C.ink : '#FFFFFF' }}>
             {eventActive ? 'End the event' : 'Start an event, administrators only'}
           </Text>
         </Pressable>
@@ -279,15 +243,13 @@ export default function Home({ navigate }) {
           borderRadius: R.card,
           borderWidth: 1,
           borderColor: C.rule,
-          backgroundColor: C.card,
+          backgroundColor: 'rgba(255,255,255,0.7)',
           alignItems: 'center',
           justifyContent: 'center',
           opacity: pressed ? 0.9 : 1,
         })}
       >
-        <Text style={{ fontFamily: F.uiSemi, fontSize: 14, color: C.accent }}>
-          Run the ready check
-        </Text>
+        <Text style={{ fontFamily: F.uiSemi, fontSize: 14, color: C.accent }}>Run the ready check</Text>
       </Pressable>
 
       <Text style={{ fontFamily: F.mono, fontSize: 10, color: C.inkSoft, marginTop: S.xl }}>

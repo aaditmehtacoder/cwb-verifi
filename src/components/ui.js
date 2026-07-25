@@ -1,20 +1,138 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { C, F, MIN_TAP, R, S, T, cardStyle, glassStyle } from '../theme';
+import {
+  AMBIENT,
+  C,
+  F,
+  MIN_TAP,
+  R,
+  S,
+  T,
+  cardStyle,
+  glassAccentStyle,
+  glassSheen,
+  glassSolidStyle,
+  glassStyle,
+} from '../theme';
 import { dur, useReducedMotion } from '../motion';
 
 export function Label({ children, style }) {
   return <Text style={[T.label, style]}>{children}</Text>;
 }
 
-// Frosted material. Used only for chrome that floats over content, never for
-// the content itself, so the reading surface stays flat and calm.
-export function Glass({ children, style, intensity = 34, tint = 'light' }) {
+/**
+ * Frosted material, with the lit edge that makes it read as glass rather than
+ * as a translucent rectangle.
+ *
+ * Used only for chrome that floats over content, never for the content itself,
+ * so a reading surface stays flat and its contrast never depends on what is
+ * scrolling beneath it.
+ *
+ * `tone` picks the pane: 'thin' for chrome over paper, 'solid' for chrome that
+ * has to stay readable over the accountability field, 'accent' for the one
+ * surface on a screen that is the subject rather than the frame.
+ */
+export function Glass({ children, style, intensity = 34, tint = 'light', tone = 'thin', sheen = true }) {
+  const base = { thin: glassStyle, solid: glassSolidStyle, accent: glassAccentStyle }[tone] || glassStyle;
   return (
-    <BlurView intensity={intensity} tint={tint} style={[glassStyle, { overflow: 'hidden' }, style]}>
+    <BlurView intensity={intensity} tint={tint} style={[base, { overflow: 'hidden' }, style]}>
+      {sheen ? <View style={glassSheen} pointerEvents="none" /> : null}
       {children}
     </BlurView>
+  );
+}
+
+/**
+ * The wash a pane of glass refracts.
+ *
+ * Sits behind a screen's content at three per cent, so a glass surface has
+ * something to bend rather than flat grey. Three plain circles rather than a
+ * gradient library: at this opacity the difference is invisible and it is one
+ * fewer thing to fail on a phone in a hallway.
+ */
+export function Ambient({ children, style }) {
+  return (
+    <View style={[{ flex: 1, backgroundColor: C.paper }, style]}>
+      <View style={StyleSheet.absoluteFill} pointerEvents="none">
+        {AMBIENT.map((b, i) => (
+          <View
+            key={i}
+            style={{
+              position: 'absolute',
+              top: b.top,
+              left: b.left,
+              width: b.size,
+              height: b.size,
+              borderRadius: b.size / 2,
+              backgroundColor: b.color,
+            }}
+          />
+        ))}
+      </View>
+      {children}
+    </View>
+  );
+}
+
+/**
+ * A small box button: an icon, a word, and a tap target that survives a shaking
+ * hand. This is how a person picks between things in this product now — reading
+ * five paragraphs to choose a role is a thing you do on a quiet Tuesday, and
+ * every screen here is built for the other day.
+ */
+export function BoxButton({ icon, label, sub, onPress, active, style, width }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={sub ? `${label}. ${sub}` : label}
+      accessibilityState={{ selected: !!active }}
+      style={({ pressed }) => [
+        {
+          width,
+          minHeight: 96,
+          borderRadius: 18,
+          paddingHorizontal: S.md,
+          paddingVertical: S.md,
+          justifyContent: 'space-between',
+          backgroundColor: active ? C.accent : 'rgba(255,255,255,0.72)',
+          borderWidth: 1,
+          borderColor: active ? C.accent : 'rgba(255,255,255,0.9)',
+          shadowColor: '#0B1C22',
+          shadowOpacity: pressed ? 0.06 : 0.1,
+          shadowRadius: pressed ? 8 : 16,
+          shadowOffset: { width: 0, height: pressed ? 2 : 6 },
+          elevation: pressed ? 2 : 5,
+          transform: [{ scale: pressed ? 0.975 : 1 }],
+        },
+        style,
+      ]}
+    >
+      {icon ? icon(active ? '#FFFFFF' : C.accent) : null}
+      <View>
+        <Text
+          numberOfLines={1}
+          style={{ fontFamily: F.uiSemi, fontSize: 14, color: active ? '#FFFFFF' : C.ink }}
+        >
+          {label}
+        </Text>
+        {sub ? (
+          <Text
+            numberOfLines={2}
+            style={{
+              fontFamily: F.ui,
+              fontSize: 11,
+              lineHeight: 15,
+              marginTop: 2,
+              color: active ? 'rgba(255,255,255,0.82)' : C.inkSoft,
+            }}
+          >
+            {sub}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -173,9 +291,9 @@ export function Sheet({ visible, onClose, title, children, maxHeight = '78%' }) 
         }}
       >
         <Glass
-          intensity={60}
+          intensity={70}
+          tone="solid"
           style={{
-            backgroundColor: 'rgba(255,255,255,0.86)',
             borderTopLeftRadius: 26,
             borderTopRightRadius: 26,
             borderBottomWidth: 0,
@@ -229,18 +347,7 @@ export function FloatingBar({ children, style }) {
           tiles. A narrow blur leaves readable squares behind the label and a
           thin material lets their colour through, so: wide blur, dense white.
           What passes through is a wash, never a shape. */}
-      <Glass
-        intensity={80}
-        style={[
-          {
-            borderRadius: 22,
-            padding: S.sm,
-            backgroundColor: 'rgba(255,255,255,0.93)',
-            borderColor: 'rgba(221,226,225,0.9)',
-          },
-          style,
-        ]}
-      >
+      <Glass intensity={80} tone="solid" style={[{ borderRadius: 22, padding: S.sm }, style]}>
         {children}
       </Glass>
     </View>

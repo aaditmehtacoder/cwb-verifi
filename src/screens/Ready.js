@@ -7,7 +7,9 @@ import { C, F, R, S, T, cardStyle } from '../theme';
 import { Button, Check, Rule } from '../components/ui';
 import Explain from '../components/Explain';
 import Icon from '../components/Icon';
+import Where from '../components/Where';
 import { useVerifi } from '../store';
+import { describe, formatFix } from '../location';
 import { boardStatus, isConfigured } from '../supabase';
 import { forget, notify, prepareNotifications } from '../notifications';
 
@@ -75,6 +77,11 @@ export default function Ready({ navigate }) {
   const [alerts, setAlerts] = useState('off');
   const [boardNote, setBoardNote] = useState('checking');
   const [tested, setTested] = useState(null);
+  // A permission being granted is not the same as the hardware answering. Both
+  // of these hold the actual result of asking, so the screen can show a real
+  // reading rather than a green tick that means "iOS did not say no".
+  const [fix, setFix] = useState(null);
+  const [locating, setLocating] = useState(false);
 
   const refresh = useCallback(async () => {
     if (Platform.OS !== 'web') {
@@ -169,9 +176,70 @@ export default function Ready({ navigate }) {
         />
       </View>
 
-      {/* Proving alerts arrive is the only way to know they will. */}
+      {/* Proving the hardware answers is the only way to know it will.
+          A granted permission means iOS did not say no; it does not mean a
+          fix will arrive, and the difference only shows up during an event. */}
       <View style={[cardStyle, { marginTop: S.md, padding: S.lg, gap: S.md }]}>
-        <Text style={T.label}>Prove it works</Text>
+        <Text style={T.label}>Prove location works</Text>
+        <Text style={T.small}>
+          Takes one real reading from this phone and shows it. This is exactly what gets stamped on a
+          confirmation, and nothing is sent anywhere.
+        </Text>
+        <Button
+          title={locating ? 'Reading' : 'Take a reading now'}
+          variant="secondary"
+          onPress={async () => {
+            setLocating(true);
+            setFix(null);
+            const { granted } = await Location.requestForegroundPermissionsAsync().catch(() => ({
+              granted: false,
+            }));
+            if (!granted) {
+              setFix({ error: 'Location is off, so no reading was taken.' });
+              setLocating(false);
+              refresh();
+              return;
+            }
+            try {
+              const p = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.Balanced,
+              });
+              const reading = {
+                lat: p.coords.latitude,
+                lon: p.coords.longitude,
+                accuracy: p.coords.accuracy,
+              };
+              setFix({ ...reading, place: describe(reading), text: formatFix(reading) });
+            } catch (e) {
+              setFix({ error: `The phone did not return a position: ${e.message}` });
+            }
+            setLocating(false);
+            refresh();
+          }}
+        />
+        {fix ? (
+          fix.error ? (
+            <Text style={[T.small, { color: C.pending }]}>{fix.error}</Text>
+          ) : (
+            <View style={{ gap: S.sm }}>
+              <Text style={{ fontFamily: F.serif, fontSize: 16, lineHeight: 24, color: C.ink }}>
+                This phone is at {fix.place}.
+              </Text>
+              {/* On iOS this is Apple Maps, drawn by MapKit, no key required. */}
+              <Where
+                lat={fix.lat}
+                lon={fix.lon}
+                accuracy={fix.accuracy}
+                place={fix.place}
+                label="This phone"
+              />
+            </View>
+          )
+        ) : null}
+      </View>
+
+      <View style={[cardStyle, { marginTop: S.md, padding: S.lg, gap: S.md }]}>
+        <Text style={T.label}>Prove notifications work</Text>
         <Text style={T.small}>
           Send yourself the notification a staff member gets when the last open student is confirmed.
         </Text>
@@ -191,15 +259,27 @@ export default function Ready({ navigate }) {
               'Test alert from Verifi. Nothing has changed on the board.',
               'test'
             );
+            // Which Android channel it landed in is the single most common
+            // reason a notification is granted, sent, and never seen.
+            const channels =
+              Platform.OS === 'android'
+                ? await Notifications.getNotificationChannelsAsync().catch(() => [])
+                : null;
             setTested(
               r.ok
-                ? 'Sent. It should appear on this phone within a second.'
+                ? `Sent. It should appear on this phone within a second.${
+                    channels ? ` Android channels ready: ${channels.map((c) => c.id).join(', ')}.` : ''
+                  }`
                 : `Not sent: ${r.reason}.`
             );
             refresh();
           }}
         />
         {tested ? <Text style={[T.small, { color: C.ink }]}>{tested}</Text> : null}
+        <Text style={[T.small, { fontSize: 12 }]}>
+          Verifi only ever raises notifications from this phone, never a push server, so these work in
+          Expo Go on both platforms and need no project ID or network.
+        </Text>
         {Platform.OS === 'web' ? (
           <Text style={[T.small, { fontSize: 12 }]}>
             This screen is running in a browser, where phone permissions do not apply. Open it on a phone

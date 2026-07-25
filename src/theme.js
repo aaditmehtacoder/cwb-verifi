@@ -68,19 +68,66 @@ export const cardStyle = {
   elevation: 2,
 };
 
-// Translucent material for floating chrome, bars, sheets, the code panel.
-// The content beneath stays faintly legible, so nothing feels stacked on top
-// of the room the way an opaque panel does.
+// ── Glass ────────────────────────────────────────────────────────────────────
+//
+// Real glass is not a translucent rectangle. It has a lit edge where light
+// catches the bevel, a shadowed edge where it does not, and it lifts off the
+// surface underneath rather than lying flat on it. Three tokens carry that:
+// `glassStyle` is the body, `glassSheen` is the highlight along the top inner
+// edge, and `glassEdge` is the hairline that separates the pane from the paper.
+//
+// The rule that governs where this is allowed has not changed and is the whole
+// reason it stays legible: glass is for chrome that floats over content. A
+// reading surface stays flat and opaque, so text contrast never depends on what
+// happens to be scrolling underneath it. Ninety-nine saturated tiles behind a
+// sentence is not a background, it is noise.
+
 export const glassStyle = {
-  backgroundColor: 'rgba(255,255,255,0.66)',
+  backgroundColor: 'rgba(255,255,255,0.62)',
   borderWidth: 1,
-  borderColor: 'rgba(255,255,255,0.72)',
-  shadowColor: '#16232A',
-  shadowOpacity: 0.1,
-  shadowRadius: 20,
-  shadowOffset: { width: 0, height: 8 },
-  elevation: 6,
+  borderColor: 'rgba(255,255,255,0.85)',
+  shadowColor: '#0B1C22',
+  shadowOpacity: 0.12,
+  shadowRadius: 24,
+  shadowOffset: { width: 0, height: 10 },
+  elevation: 8,
 };
+
+// The lit top edge. An absolutely positioned hairline, one pixel inside the
+// border, at the low opacity a real bevel actually catches.
+export const glassSheen = {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  right: 0,
+  height: 1,
+  backgroundColor: 'rgba(255,255,255,0.9)',
+};
+
+// A denser pane, for chrome that has to stay readable over the field.
+export const glassSolidStyle = {
+  ...glassStyle,
+  backgroundColor: 'rgba(255,255,255,0.93)',
+  borderColor: 'rgba(255,255,255,0.95)',
+};
+
+// The accent-tinted pane, for the one surface on a screen that is the subject
+// rather than the frame.
+export const glassAccentStyle = {
+  ...glassStyle,
+  backgroundColor: 'rgba(18,79,76,0.07)',
+  borderColor: 'rgba(18,79,76,0.16)',
+};
+
+// The wash the glass sits on. Two soft pools of colour, far apart and very
+// faint, so a pane has something to refract instead of flat grey. Rendered as
+// plain views rather than a gradient dependency; at 3% nobody can tell, and it
+// is one fewer thing to fail on a phone in a hallway.
+export const AMBIENT = [
+  { color: 'rgba(18,79,76,0.055)', size: 380, top: -140, left: -120 },
+  { color: 'rgba(47,125,104,0.05)', size: 320, top: 300, left: 200 },
+  { color: 'rgba(185,133,36,0.035)', size: 300, top: 620, left: -90 },
+];
 
 export const statusColor = {
   verified: C.verified,

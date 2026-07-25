@@ -42,6 +42,10 @@ const STRINGS = {
     checkedIn: 'The school knows you are coming.',
     checkedInBody: 'Go to Gate B. Bring photo ID. Staff will confirm {name} with you there.',
     language: 'Language',
+    released: '{name} has been released to you.',
+    releasedBody: 'Handed over by {who}{when} at Gate B. Nothing further is needed here.',
+    passCode: 'Pass code',
+    passSpoken: 'If the scanner will not read the screen, read these six digits to the staff member.',
   },
   es: {
     yourStudent: 'Su estudiante',
@@ -72,6 +76,10 @@ const STRINGS = {
     checkedIn: 'La escuela sabe que viene.',
     checkedInBody: 'Vaya a la puerta B. Traiga identificación. El personal confirmará a {name} allí.',
     language: 'Idioma',
+    released: '{name} ha sido entregado a usted.',
+    releasedBody: 'Entregado por {who}{when} en la puerta B. No hace falta nada más aquí.',
+    passCode: 'Código del pase',
+    passSpoken: 'Si el lector no puede leer la pantalla, lea estos seis dígitos al personal.',
   },
   vi: {
     yourStudent: 'Học sinh của bạn',
@@ -102,6 +110,10 @@ const STRINGS = {
     checkedIn: 'Nhà trường biết bạn đang tới.',
     checkedInBody: 'Hãy đến Cổng B. Mang theo giấy tờ tùy thân. Nhân viên sẽ xác nhận {name} ở đó.',
     language: 'Ngôn ngữ',
+    released: '{name} đã được bàn giao cho bạn.',
+    releasedBody: 'Do {who} bàn giao{when} tại Cổng B. Không cần làm gì thêm ở đây.',
+    passCode: 'Mã thẻ',
+    passSpoken: 'Nếu máy quét không đọc được màn hình, hãy đọc sáu chữ số này cho nhân viên.',
   },
   zh: {
     yourStudent: '您的学生',
@@ -127,6 +139,10 @@ const STRINGS = {
     checkedIn: '学校已知道您正在赶来。',
     checkedInBody: '请前往 B 门，携带带照片的证件。工作人员会在那里与您确认 {name}。',
     language: '语言',
+    released: '{name} 已交由您接走。',
+    releasedBody: '由 {who} 在 B 门交接{when}。这里无需再做任何事。',
+    passCode: '通行码',
+    passSpoken: '如果扫描器读不出屏幕，请把这六位数字念给工作人员。',
   },
 };
 

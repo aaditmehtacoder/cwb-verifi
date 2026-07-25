@@ -35,13 +35,20 @@ export async function prepareNotifications() {
       granted = asked.granted;
     }
     if (granted && Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('event', {
+      // An immediately-delivered local notification lands in the channel named
+      // "default" on Android. Creating only an "event" channel is the classic
+      // way to have alerts that work perfectly on iOS and arrive silently, or
+      // not at all, on Android. Both are configured, identically.
+      const channel = {
         name: 'Event updates',
         importance: Notifications.AndroidImportance.HIGH,
-        sound: null,
+        sound: null, // an emergency tool should not add noise to a room
         vibrationPattern: [0, 120],
         enableVibrate: true,
-      });
+        lightColor: '#124F4C',
+      };
+      await Notifications.setNotificationChannelAsync('default', channel);
+      await Notifications.setNotificationChannelAsync('event', channel);
     }
     ready = granted;
     return granted;

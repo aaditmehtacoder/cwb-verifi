@@ -12,6 +12,9 @@ import {
   isConfigured,
   logScan,
   pushConfirmation,
+  pushReunification,
+  resetBoard,
+  searchStudents,
   sendMessage,
   staffNameFrom,
   subscribeToBoard,
@@ -25,19 +28,28 @@ function groupIntoClusters(rows) {
   const byCluster = new Map(CLUSTERS.map((c) => [c.name, []]));
   rows.forEach((r) => {
     if (!byCluster.has(r.cluster)) byCluster.set(r.cluster, []);
-    byCluster.get(r.cluster).push({
-      id: r.id,
-      name: r.name,
-      initials: r.initials,
-      cluster: r.cluster,
-      status: r.status,
-      confirmedBy: r.confirmed_by || null,
-      confirmedAt: r.confirmed_at || null,
-      place: r.place || null,
-      coords: r.lat != null ? { lat: r.lat, lon: r.lon, accuracy: r.accuracy } : null,
-    });
+    byCluster.get(r.cluster).push(fromRow(r));
   });
   return CLUSTERS.map((c) => ({ ...c, students: byCluster.get(c.name) || [] }));
+}
+
+/** One board row, in the shape the screens read. */
+export function fromRow(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    initials: r.initials,
+    cluster: r.cluster,
+    grade: r.grade || null,
+    code: r.code || null,
+    guardianCode: r.guardian_code || null,
+    status: r.status,
+    confirmedBy: r.confirmed_by || null,
+    confirmedAt: r.confirmed_at || null,
+    method: r.method || null,
+    place: r.place || null,
+    coords: r.lat != null ? { lat: r.lat, lon: r.lon, accuracy: r.accuracy } : null,
+  };
 }
 
 const clone = (cs) => cs.map((c) => ({ ...c, students: c.students.map((s) => ({ ...s })) }));
@@ -207,14 +219,34 @@ export function VerifiProvider({ children }) {
     );
   }, []);
 
-  // The confirmation. A human, never the AI, never a scan on its own, moves a
-  // tile to verified. Local first so the room sees it instantly, then shared.
+  /**
+   * The confirmation. A human, never the AI, never a scan on its own, moves a
+   * tile to verified. Local first so the room sees it instantly, then shared.
+   *
+   * `method` is how the staff member established that this is the right child:
+   *
+   *   qr        the student's rotating code, read off their screen
+   *   recited   they had no phone and said their fixed code out loud
+   *   roster    a teacher ticking their own room
+   *   vouched   a staff member's word alone, no code of any kind
+   *
+   * It is carried all the way to the board because the four are not equally
+   * strong, and an event that gets reviewed afterwards has to be able to tell
+   * them apart. Nothing in the interface treats them differently in the moment:
+   * a person vouched, the count moves, that is the product.
+   */
   const confirmStudent = useCallback(
     (studentId, opts = {}) => {
       const by = opts.by || staffName;
       const at = new Date().toISOString();
+      const method = opts.method || 'roster';
       buzz('confirm');
-      setStatus(studentId, 'verified', { confirmedBy: by, confirmedAt: at, place: opts.place || null });
+      setStatus(studentId, 'verified', {
+        confirmedBy: by,
+        confirmedAt: at,
+        method,
+        place: opts.place || null,
+      });
 
       setRingingId(studentId);
       setDimField(true);
@@ -236,12 +268,90 @@ export function VerifiProvider({ children }) {
         const fix = opts.fix || (await getFixOnce());
         const place = opts.place || describe(fix);
         if (fix || place) setStatus(studentId, 'verified', { coords: fix, place });
-        if (liveRef.current) pushConfirmation(studentId, by, { fix, place });
-        if (liveRef.current && opts.code) logScan(studentId, by, opts.code, fix);
+        if (liveRef.current) pushConfirmation(studentId, by, { fix, place, method });
+        if (liveRef.current) logScan(studentId, by, opts.code || null, fix, method);
       })();
     },
-    [setStatus, staffName, all, counts.verified, raise]
+    [setStatus, staffName, all, counts.verified, raise, startedAt]
   );
+
+  /**
+   * A student handed to their guardian at the gate.
+   *
+   * This is the one status that is not "accounted for on campus", and it is the
+   * one mistake in an event that cannot be undone afterwards, so it is kept
+   * separate from a confirmation rather than folded into it. A row lands beside
+   * the status saying which adult took them and which member of staff released
+   * them; that record is the point, and a status field alone cannot hold it.
+   */
+  const reunify = useCallback(
+    (studentId, { guardianName, by, passCode } = {}) => {
+      const releasedBy = by || staffName;
+      const at = new Date().toISOString();
+      buzz('confirm');
+      setStatus(studentId, 'reunified', {
+        confirmedBy: releasedBy,
+        confirmedAt: at,
+        method: 'guardian',
+        place: 'Gate B, reunification',
+      });
+      setRingingId(studentId);
+      setTimeout(() => setRingingId(null), 1400);
+
+      const student = all.find((s) => s.id === studentId);
+      raiseRef.current?.({
+        key: `reunified:${studentId}`,
+        title: `${student?.name || 'A student'} released`,
+        detail: `to ${guardianName || 'a guardian'} by ${releasedBy}`,
+      });
+
+      if (liveRef.current) {
+        pushReunification({ studentId, guardianName, releasedBy, passCode });
+      }
+      return { ok: true };
+    },
+    [setStatus, staffName, all]
+  );
+
+  /**
+   * Search the board, not this phone's copy of it.
+   *
+   * The no-phone path has to be able to find a student this device never
+   * loaded, so it asks Postgres when there is a Postgres to ask and falls back
+   * to the roster in memory when there is not. Either way the caller gets the
+   * same shape and never has to know which happened.
+   */
+  const findStudents = useCallback(
+    async (term) => {
+      const q = String(term || '').trim();
+      if (q.length < 2) return [];
+
+      if (liveRef.current) {
+        const rows = await searchStudents(q);
+        if (rows) {
+          // Prefer the copy already on screen, so a match reflects a
+          // confirmation that landed a second ago over what the query returned.
+          return rows.map((r) => all.find((s) => s.id === r.id) || fromRow(r));
+        }
+      }
+      const needle = q.toLowerCase();
+      return all.filter((s) => s.name.toLowerCase().includes(needle)).slice(0, 12);
+    },
+    [all]
+  );
+
+  /** Put the shared board back to its opening position, mid-demo, from a phone. */
+  const resetSharedBoard = useCallback(async () => {
+    buzz('weighty');
+    setClusters(clone(CLUSTERS));
+    setStartedAt(new Date().toISOString());
+    setAllClear(false);
+    setAnnouncement(null);
+    setRingingId(null);
+    setConsent(null);
+    if (!liveRef.current) return { ok: true, local: true };
+    return resetBoard();
+  }, []);
 
   const markNotWithClass = useCallback(
     (studentId) => {
@@ -412,6 +522,9 @@ export function VerifiProvider({ children }) {
       announcement,
       setAnnouncement,
       confirmStudent,
+      reunify,
+      findStudents,
+      resetSharedBoard,
       markNotWithClass,
       consent,
       askStudentForLocation,
@@ -443,7 +556,7 @@ export function VerifiProvider({ children }) {
       buzz,
       maya: all.find((s) => s.id === MAYA.id),
     }),
-    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, markNotWithClass, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
+    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, reunify, findStudents, resetSharedBoard, markNotWithClass, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
   );
 
   return <VerifiContext.Provider value={value}>{children}</VerifiContext.Provider>;

@@ -22,6 +22,8 @@ npm run lan             # then press i (simulator), a (Android), or w (web)
 | `npm run qr` | detects the current IP, checks the server answers on it, opens QR codes in Preview |
 | `npm run ai:check` | guardrail tests for the model layer, no network, no quota |
 | `npm run ai:check -- live` | the above plus one real call through the free-model chain |
+| `npm run db:reset` | drops and rebuilds every table from `supabase/schema.sql`, needs `SUPABASE_DB_URL` |
+| `npm run reset` | between demo takes: moves rows back to the opening position, needs only the app keys |
 
 On web the app renders inside a 390 × 844 phone frame. On device it runs full-screen.
 
@@ -50,21 +52,59 @@ tunnel codes. The tunnel URL changes on every restart.
 ## The flow
 
 ```
-splash → onboarding (3 slides) → role picker
+splash → onboarding (3 slides) → sign in (Google · Microsoft · Apple · email)
+       → role picker, six boxes
+         ├─ Staff     camera · by code · by name, then a person confirms
          ├─ Teacher   roster, With me / Not with me, off-roster student, offline queue
-         ├─ Student   one line, one button, a rotating six-digit code
-         ├─ Parent    waiting, verified, or reunification, following the board
-         └─ Admin     counts → accountability field → evidence → suggestion
-                      → Request verification at Nurse Checkpoint
-                      → nurse scan → Confirm → ALL CLEAR (99 → 100)
+         ├─ Student   a rotating six-digit code, and one fixed code learned by heart
+         ├─ Parent    waiting, verified, or released, plus a scannable guardian pass
+         ├─ Admin     counts → accountability field → evidence → suggestion
+         │            → Request verification at Nurse Checkpoint
+         │            → confirm → ALL CLEAR (99 → 100)
+         └─ Messages  one thread every phone shares, and the assistant
 ```
 
 Every screen is reachable; nothing dead-ends. The event bar carries the drill badge
-and a **Switch** action back to the role picker.
+and a tap on the mark returns to the role picker.
+
+## Establishing who a student is
+
+The camera is the fast path and it is not the only one. During a real event a large
+minority of students cannot show a code: a flat battery, a phone in a locker, a phone
+taken off them that morning, a ninth grader who does not own one. So there are three
+ways in, and none of them is a failure state.
+
+| Way | What happens | Recorded as |
+| --- | --- | --- |
+| Camera | reads the rotating code off the student's screen | `qr` |
+| By code | they recite the fixed six digits they know by heart | `recited` |
+| By name | search the board, find them, then ask them for that code | `recited` |
+| Teacher roster | a teacher ticks off their own room | `roster` |
+| No code at all | a staff member's word alone, three taps deep, labelled as such | `vouched` |
+
+The method travels to the board with the confirmation, because the five are not equally
+strong and an event that gets reviewed afterwards has to be able to tell them apart.
+Nothing in the interface treats them differently in the moment: a person vouched, the
+count moves, that is the product.
+
+The fixed code is derived, not stored, by the same arithmetic in `src/data.js` and in
+`supabase/schema.sql`, so the app and the board agree without a seeding step. **A real
+deployment issues random codes and stores only a hash of each**; that is the one line
+that has to change before this carries a real roster.
+
+## Reunification
+
+A parent taps *I am on my way* and gets a real QR the gate actually reads, plus the same
+six digits in type for when a screen will not scan. Staff camera reads it, checks the code
+against that student, and shows which adults are on the authorised list. Releasing writes
+the status **and** a row saying which adult took them and which member of staff handed
+them over. That second record is the point, and a status field alone cannot hold it.
 
 ## Rules the code enforces
 
-- **No red anywhere.** Ochre (`pending`) carries all urgency.
+- **No red anywhere.** Ochre (`pending`) carries all urgency. The single exception is
+  the red square in Microsoft's logo on the sign-in button: a vendor mark is not the
+  product speaking, and a sign-in button only works when the logo is the real one.
 - **Serif means a person vouched for it.** Source Serif 4 appears only on human-confirmed
   statements and the all-clear. Never on AI output.
 - **AI never changes a status.** The suggestion block is labelled
@@ -109,7 +149,9 @@ Without a key the app runs exactly as before, on the written suggestion.
 | Path | What it holds |
 | --- | --- |
 | `src/theme.js` | Palette, three type faces and their jobs, spacing, card + glass surfaces |
-| `src/data.js` | 106 seeded students in six clusters, evidence table, staff, templates |
+| `src/data.js` | 106 seeded students in six clusters, the code derivation, evidence, staff, templates |
+| `src/components/marks.js` | Google, Microsoft and Apple logos, from each vendor's own geometry |
+| `supabase/schema.sql` | The whole board from nothing. Destructive on purpose |
 | `src/store.js` | Event state: statuses, counts, the confirm sequence, drill/live mode |
 | `src/components/Field.js` | The accountability field, 28 px tiles, 400 ms crossfade, one ring |
 | `src/components/ui.js` | Button, Chip, Sheet (in-app, frosted), FloatingBar, Glass, Counter |

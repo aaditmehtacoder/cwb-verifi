@@ -5,6 +5,7 @@ import { Button, Chip, Counter, FloatingBar, Rule, Sheet, StatusDot } from '../c
 import Explain from '../components/Explain';
 import { AccountabilityField } from '../components/Field';
 import Avatar from '../components/Avatar';
+import Where from '../components/Where';
 import { CONFLICTS, EVIDENCE, MAYA, STAFF, SUGGESTION, TEMPLATES } from '../data';
 
 const MAYA_ID = MAYA.id;
@@ -165,9 +166,18 @@ function Panel({ title, children, style }) {
   );
 }
 
+const METHOD_LINE = {
+  qr: 'code read from their phone',
+  recited: 'code recited from memory',
+  vouched: 'no code, a staff member vouched',
+  roster: 'ticked off a room roster',
+  guardian: 'released to a guardian',
+};
+
 export default function Admin({ navigate }) {
-  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, reset, endEvent, elapsed, confirmStudent, staffName, consent, askStudentForLocation } = useVerifi();
+  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, endEvent, elapsed, confirmStudent, staffName, consent, askStudentForLocation, resetSharedBoard, live } = useVerifi();
   const [tile, setTile] = useState(null);
+  const [resetting, setResetting] = useState(false);
   const [more, setMore] = useState(false);
   const [query, setQuery] = useState('');
   const [armed, setArmed] = useState(false);
@@ -489,6 +499,27 @@ export default function Admin({ navigate }) {
           ) : null}
         </Panel>
 
+        {/* Running the whole thing twice in a row is a thing that happens and
+            that nobody plans for. This puts the board back without anybody
+            having to find a laptop between takes. */}
+        <Panel title="Start over" style={{ marginTop: S.md }}>
+          <Text style={[T.small, { marginTop: S.sm }]}>
+            Puts the board back to 99 confirmed, Maya Reyes open, six absent, and clears the thread
+            {live ? ' on every phone watching' : ' on this phone'}. Nothing about the roster changes.
+          </Text>
+          <Button
+            title={resetting ? 'Resetting' : 'Reset the board'}
+            variant="secondary"
+            style={{ marginTop: S.md }}
+            onPress={async () => {
+              setResetting(true);
+              await resetSharedBoard();
+              setResetting(false);
+              setMore(false);
+              navigate('home');
+            }}
+          />
+        </Panel>
       </Sheet>
 
       <FloatingBar>
@@ -527,20 +558,46 @@ export default function Admin({ navigate }) {
             </View>
             <Text style={{ fontFamily: F.mono, fontSize: 12, color: C.inkSoft }}>
               {tile.id} · {tile.cluster}
+              {tile.grade ? ` · grade ${tile.grade}` : ''}
             </Text>
-            {tile.status === 'verified' ? (
+            {tile.status === 'verified' || tile.status === 'reunified' ? (
               <>
                 <Text style={{ fontFamily: F.serif, fontSize: 15, lineHeight: 23, color: C.ink }}>
-                  Confirmed by {tile.confirmedBy || 'a staff member'}
+                  {tile.status === 'reunified' ? 'Released by ' : 'Confirmed by '}
+                  {tile.confirmedBy || 'a staff member'}
                   {tile.confirmedAt
                     ? ` at ${new Date(tile.confirmedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                     : ''}
                   .
                 </Text>
-                {tile.place ? (
+                {/* How identity was established. The four are not equally
+                    strong, and an event that gets reviewed afterwards has to
+                    be able to tell them apart. */}
+                {tile.method ? (
+                  <Text
+                    style={{
+                      fontFamily: F.mono,
+                      fontSize: 11,
+                      color: tile.method === 'vouched' ? C.pending : C.inkSoft,
+                    }}
+                  >
+                    {METHOD_LINE[tile.method] || tile.method}
+                  </Text>
+                ) : null}
+                {/* On iOS this draws the position on Apple Maps. Everywhere
+                    else it states it and hands off to the phone's map app. */}
+                {tile.coords ? (
+                  <Where
+                    lat={tile.coords.lat}
+                    lon={tile.coords.lon}
+                    accuracy={tile.coords.accuracy}
+                    place={tile.place}
+                    label={`${tile.name} confirmed here`}
+                    style={{ marginTop: S.xs }}
+                  />
+                ) : tile.place ? (
                   <Text style={{ fontFamily: F.mono, fontSize: 11, color: C.inkSoft }}>
                     location {tile.place}
-                    {tile.coords ? ` · ${tile.coords.lat.toFixed(5)}, ${tile.coords.lon.toFixed(5)}` : ''}
                   </Text>
                 ) : null}
               </>
@@ -565,7 +622,9 @@ export default function Admin({ navigate }) {
                       setArmed(true);
                       return;
                     }
-                    confirmStudent(tile.id, { by: staffName });
+                    // Confirming from the board is a staff member's word alone.
+                    // No code was checked, and the record says so.
+                    confirmStudent(tile.id, { by: staffName, method: 'vouched' });
                     setArmed(false);
                     setTile(null);
                   }}

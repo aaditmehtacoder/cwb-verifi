@@ -6,7 +6,7 @@ import { C, F, R as RAD, S, T, cardStyle } from '../theme';
 import { Button, Sheet } from '../components/ui';
 import Explain from '../components/Explain';
 import Icon from '../components/Icon';
-import { MAYA } from '../data';
+import { MAYA, spaced } from '../data';
 import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
 
@@ -149,6 +149,42 @@ export default function Student() {
           <Text style={[T.small, { marginTop: S.lg, textAlign: 'center' }]}>
             Staff scan this. You do not scan anything.
           </Text>
+
+          {/* The code above expires in thirty seconds and needs a charged
+              phone. This one does neither, and it is the only thing that gets
+              a student counted when their phone is dead, in a locker, or was
+              taken off them that morning. So it is on the same screen, not
+              buried in a settings page nobody opens. */}
+          <View
+            style={{
+              marginTop: S.xl,
+              alignSelf: 'stretch',
+              borderWidth: 1,
+              borderColor: 'rgba(185,133,36,0.3)',
+              backgroundColor: 'rgba(185,133,36,0.07)',
+              borderRadius: RAD.card,
+              padding: S.lg,
+              gap: S.sm,
+            }}
+          >
+            <Text style={[T.label, { fontSize: 10, color: C.pending }]}>Learn this by heart</Text>
+            <Text
+              style={{
+                fontFamily: F.monoSemi,
+                fontSize: 26,
+                letterSpacing: 3,
+                color: C.ink,
+                textAlign: 'center',
+                paddingVertical: S.xs,
+              }}
+            >
+              {spaced(MAYA.code)}
+            </Text>
+            <Text style={[T.small, { textAlign: 'center' }]}>
+              If your phone is dead or you do not have it, say these six digits to a staff member and they
+              can still count you. This one never changes. Do not tell it to another student.
+            </Text>
+          </View>
         </View>
         <Button title="Done" style={{ marginTop: S.xl }} onPress={() => setOpen(false)} />
       </Sheet>

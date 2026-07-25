@@ -48,21 +48,53 @@ const count = async (query) => {
   return (await res.json()).length;
 };
 
+// Each room was counted by the teacher who holds it. Restoring that, rather
+// than leaving 99 rows with an empty confirmer, is the difference between a
+// board that reads as real and one that reads as seeded.
+const HELD_BY = {
+  Chemistry: 'T. Whitfield',
+  Gym: 'D. Okonjo',
+  Library: 'L. Marchetti',
+  'Room 204': 'K. Ansel',
+  Cafeteria: 'P. Whitcomb',
+};
+
 (async () => {
-  const clean = {
+  const clean = { place: null, lat: null, lon: null, accuracy: null };
+
+  for (const [cluster, teacher] of Object.entries(HELD_BY)) {
+    await call('PATCH', `students?cluster=eq.${encodeURIComponent(cluster)}`, {
+      status: 'verified',
+      confirmed_by: teacher,
+      confirmed_at: new Date().toISOString(),
+      method: 'roster',
+      place: cluster,
+      lat: null,
+      lon: null,
+      accuracy: null,
+    });
+  }
+
+  await call('PATCH', 'students?cluster=eq.Absent', {
+    status: 'absent',
     confirmed_by: null,
     confirmed_at: null,
-    place: null,
-    lat: null,
-    lon: null,
-    accuracy: null,
-  };
+    method: null,
+    ...clean,
+  });
 
-  await call('PATCH', 'students?cluster=neq.Absent', { status: 'verified', ...clean });
-  await call('PATCH', 'students?cluster=eq.Absent', { status: 'absent', ...clean });
-  await call('PATCH', 'students?name=eq.Maya%20Reyes', { status: 'pending', ...clean });
+  // Maya Reyes is the one the field is waiting on. She is the whole demo.
+  await call('PATCH', 'students?name=eq.Maya%20Reyes', {
+    status: 'pending',
+    confirmed_by: null,
+    confirmed_at: null,
+    method: null,
+    ...clean,
+  });
+
   const messages = await call('DELETE', 'messages?id=gt.0');
   await call('DELETE', 'scans?id=gt.0');
+  await call('DELETE', 'reunifications?id=gt.0');
 
   const verified = await count('status=eq.verified');
   const pending = await count('status=eq.pending');
@@ -73,7 +105,7 @@ const count = async (query) => {
   console.log(`    ${pending} open        (Maya Reyes, Chemistry)`);
   console.log(`    ${absent} absent      before the event`);
   console.log(
-    `    thread      ${messages === 404 ? 'no messages table yet, run supabase/messages.sql' : 'cleared'}`
+    `    thread      ${messages === 404 ? 'no messages table yet, run npm run db:reset' : 'cleared'}`
   );
   console.log('\n  Ready to demo.\n');
 })();
