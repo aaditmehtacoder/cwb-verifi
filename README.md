@@ -151,6 +151,8 @@ Without a key the app runs exactly as before, on the written suggestion.
 | `src/theme.js` | Palette, three type faces and their jobs, spacing, card + glass surfaces |
 | `src/data.js` | 106 seeded students in six clusters, the code derivation, evidence, staff, templates |
 | `src/components/marks.js` | Google, Microsoft and Apple logos, from each vendor's own geometry |
+| `src/components/Where.ios.js` | Apple Maps (MapKit) view of where a confirmation happened |
+| `src/components/Where.js` | The same, without a map, for Android and web |
 | `supabase/schema.sql` | The whole board from nothing. Destructive on purpose |
 | `src/store.js` | Event state: statuses, counts, the confirm sequence, drill/live mode |
 | `src/components/Field.js` | The accountability field, 28 px tiles, 400 ms crossfade, one ring |

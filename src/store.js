@@ -353,12 +353,63 @@ export function VerifiProvider({ children }) {
     return resetBoard();
   }, []);
 
+  /**
+   * A teacher saying a student is not in their room.
+   *
+   * That is a statement about this room, not about the school. If somebody else
+   * has already laid eyes on the student — the nurse at a checkpoint, another
+   * teacher whose room they wandered into — then this must not touch their
+   * status. Letting a teacher's "not here" silently erase another staff
+   * member's confirmation would take a found child and make them missing again,
+   * which is the worst thing this app could do.
+   *
+   * Returns what actually happened so the screen can say it out loud.
+   */
   const markNotWithClass = useCallback(
     (studentId) => {
+      const student = all.find((s) => s.id === studentId);
+      if (student?.status === 'verified' || student?.status === 'reunified') {
+        buzz('tap');
+        return { changed: false, student };
+      }
       buzz('weighty');
-      setStatus(studentId, 'pending', { confirmedBy: null, confirmedAt: null });
+      setStatus(studentId, 'pending', { confirmedBy: null, confirmedAt: null, method: null });
+      return { changed: true, student };
     },
-    [setStatus]
+    [setStatus, all]
+  );
+
+  /**
+   * The last time a teacher saw a student they cannot account for.
+   *
+   * Worth almost nothing on its own and a great deal next to four other
+   * reports. It goes down the shared thread because the person who needs it is
+   * whoever is deciding where to send the next search, and they are not in this
+   * room.
+   */
+  const reportLastSeen = useCallback(
+    async (studentId, where, by) => {
+      const student = all.find((s) => s.id === studentId);
+      // The report belongs to whoever holds the room, which is not necessarily
+      // the account signed in on this phone.
+      const author = by || staffName;
+      const at = new Date().toISOString();
+      setStatus(studentId, undefined, { lastSeen: where, lastSeenAt: at, lastSeenBy: author });
+      raiseRef.current?.({
+        key: `lastseen:${studentId}:${at}`,
+        title: `${student?.name || 'A student'} last seen`,
+        detail: `${where}, reported by ${author}`,
+      });
+      if (liveRef.current) {
+        await sendMessage({
+          author,
+          role: 'staff',
+          body: `${student?.name || studentId} is not in my room. Last seen: ${where}.`,
+        });
+      }
+      return { ok: true };
+    },
+    [all, setStatus, staffName]
   );
 
   const undoConfirm = useCallback(
@@ -526,6 +577,7 @@ export function VerifiProvider({ children }) {
       findStudents,
       resetSharedBoard,
       markNotWithClass,
+      reportLastSeen,
       consent,
       askStudentForLocation,
       answerConsent,
@@ -556,7 +608,7 @@ export function VerifiProvider({ children }) {
       buzz,
       maya: all.find((s) => s.id === MAYA.id),
     }),
-    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, reunify, findStudents, resetSharedBoard, markNotWithClass, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
+    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, reunify, findStudents, resetSharedBoard, markNotWithClass, reportLastSeen, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
   );
 
   return <VerifiContext.Provider value={value}>{children}</VerifiContext.Provider>;
