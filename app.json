@@ -1,0 +1,52 @@
+{
+  "expo": {
+    "name": "Verifi",
+    "slug": "verifi",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F1F3F2",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.verifi.app",
+      "icon": "./assets/icon.png"
+    },
+    "android": {
+      "package": "com.verifi.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#124F4C"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Verifi uses the camera to scan a student code so a staff member can confirm them in person."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Verifi records where a staff member confirmed a student, so the board shows where each person was accounted for."
+        }
+      ]
+    ],
+    "scheme": "verifi",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#124F4C"
+    }
+  }
+}
