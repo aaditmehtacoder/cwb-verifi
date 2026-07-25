@@ -6,6 +6,7 @@ import Explain from '../components/Explain';
 import Avatar from '../components/Avatar';
 import Icon from '../components/Icon';
 import Where from '../components/Where';
+import Locate from '../components/Locate';
 import { OFF_ROSTER } from '../data';
 import { useVerifi } from '../store';
 import { useLiveLocation } from '../location';
@@ -565,6 +566,10 @@ export default function Teacher({ navigate }) {
                       Nobody has confirmed {s.name.split(' ')[0]} yet. Tapping With me does it under your
                       name.
                     </Text>
+                    {/* A teacher who cannot find a student can ask that
+                        student's own phone, on the same terms as an
+                        administrator: it is a request, and it can be refused. */}
+                    <Locate student={s} />
                     {s.lastSeen ? (
                       <Text style={{ fontFamily: F.uiMed, fontSize: 14, color: C.ink }}>
                         Last seen: {s.lastSeen}

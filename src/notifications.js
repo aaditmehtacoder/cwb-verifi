@@ -87,7 +87,13 @@ export async function notify(title, body, key) {
       content: {
         title,
         body,
-        sound: null,
+        // `false` for silence, never `null`. The native layer types this field
+        // as boolean-or-string and rejects null outright with "type must be
+        // either bool or string" — which throws before anything is delivered,
+        // so every notification in the app failed, on every platform, while the
+        // code above it looked entirely correct. `false` is the same intent:
+        // an emergency tool should not add noise to a room.
+        sound: false,
         interruptionLevel: 'timeSensitive',
         priority: Notifications.AndroidNotificationPriority.HIGH,
       },
@@ -102,4 +108,18 @@ export async function notify(title, body, key) {
 /** Let a repeat through, for the test button that must fire every time. */
 export function forget(key) {
   alreadySent.delete(key);
+}
+
+/**
+ * Forget every fact, because the event they belonged to is over.
+ *
+ * The keys above are deliberately the fact rather than the moment, which is
+ * right within one event and wrong across two: "Maya Reyes was confirmed" is a
+ * different fact in the drill you are running now than in the one you ran
+ * twenty minutes ago. Without this, a second run-through is completely silent —
+ * every notification dropped as a duplicate of the first — which is exactly the
+ * failure nobody notices until they are demonstrating the thing twice.
+ */
+export function resetNotifications() {
+  alreadySent.clear();
 }

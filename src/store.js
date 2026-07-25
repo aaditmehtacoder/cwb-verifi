@@ -4,24 +4,70 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Haptics from 'expo-haptics';
 import { CLUSTERS, EVENT_PASSWORD, MAYA, OFF_ROSTER, TEACHERS } from './data';
 import { describe, getFixOnce } from './location';
-import { notify, prepareNotifications } from './notifications';
+import { notify, prepareNotifications, resetNotifications } from './notifications';
 import {
   boardStatus,
   currentUser,
   fetchStudents,
   isConfigured,
   logScan,
+  fetchTracking,
   pushConfirmation,
   pushReunification,
+  pushTrackingAnswer,
+  pushTrackingAsk,
+  pushTrackingEnd,
+  pushTrackingOverride,
   resetBoard,
   searchStudents,
   sendMessage,
   staffNameFrom,
   subscribeToBoard,
+  subscribeToTracking,
 } from './supabase';
 
 const VerifiContext = createContext(null);
 const SAVE_KEY = 'verifi:event:v1';
+
+/**
+ * Which person each screen is being used as.
+ *
+ * In the field these are five different people holding five different phones: a
+ * parent's device only ever runs the parent view and never learns another
+ * child's name. Here one device impersonates all five, and notifications are
+ * the one place that fiction leaks — a confirmation announcing "R. Alvarez ·
+ * Science wing" on the parent screen hands a family the location the parent
+ * screen spends four languages refusing to show.
+ *
+ * So every notification declares who it is for, and a phone only ever raises
+ * the ones belonging to whoever it is currently being. Routes with no role —
+ * home, sign in, the ready check — raise nothing.
+ */
+const ROLE_FOR_ROUTE = {
+  parent: 'parent',
+  student: 'student',
+  teacher: 'teacher',
+  scan: 'staff',
+  chat: 'staff',
+  admin: 'admin',
+  allclear: 'admin',
+  start: 'admin',
+};
+
+export const roleForRoute = (route) => ROLE_FOR_ROUTE[route] || null;
+
+// Anything that happened while this phone was being somebody else. Held so the
+// moment is not lost, capped so switching views is never a wall of alerts.
+const QUEUE_LIMIT = 3;
+
+// How long a student's phone may report its position before the permission
+// lapses on its own. Long enough to find somebody in a large building, short
+// enough that a drill nobody remembered to close is not still tracking a child
+// at home that evening.
+export const TRACK_MINUTES = 30;
+
+/** The two states in which a student's device is actually reporting. */
+export const isLocating = (t) => t?.state === 'sharing' || t?.state === 'overridden';
 
 // Remote rows come back flat; the field wants them grouped the way the school is.
 function groupIntoClusters(rows) {
@@ -84,7 +130,14 @@ export function VerifiProvider({ children }) {
   const [eventActive, setEventActive] = useState(false);
   const [startedBy, setStartedBy] = useState(null);
   const [teacherId, setTeacherId] = useState(TEACHERS[0].id);
-  const [consent, setConsent] = useState(null);
+  // Read inside the realtime callback, which closes over its first render.
+  const teacherRef = useRef(TEACHERS[0]);
+  // studentId → { state, askedBy, askedAt, answeredAt, overriddenBy,
+  //               overrideReason, endedReason, expiresAt }
+  const [tracking, setTracking] = useState({});
+  const setTrack = useCallback((studentId, patch) => {
+    setTracking((prev) => ({ ...prev, [studentId]: { ...(prev[studentId] || {}), ...patch } }));
+  }, []);
   const [elapsed, setElapsed] = useState('00:00');
   const [loaded, setLoaded] = useState(false);
 
@@ -99,15 +152,61 @@ export function VerifiProvider({ children }) {
 
   const all = useMemo(() => clusters.flatMap((c) => c.students), [clusters]);
 
+  // Which screen this phone is on, and therefore who it is being.
+  const [view, setView] = useState('home');
+  const role = roleForRoute(view);
+  const roleRef = useRef(null);
+  roleRef.current = role;
+  const pending = useRef({});
+
   const raiseRef = useRef(null);
 
   /**
-   * One fact, one notification, delivered by the operating system.
-   * `key` is the fact itself, so the same confirmation arriving twice over
-   * realtime does not buzz a teacher twice.
+   * Students this phone has just acted on.
+   *
+   * Supabase sends a phone its own writes back over realtime, so without a
+   * record of what we did ourselves there is no way to tell "somebody across
+   * the building found her" from "you tapped a button half a second ago". Ids
+   * are held briefly, then dropped, so a genuine later change by another member
+   * of staff still announces itself.
+   */
+  const mine = useRef(new Set());
+  const claim = useCallback((studentId) => {
+    mine.current.add(studentId);
+    setTimeout(() => mine.current.delete(studentId), 15000);
+  }, []);
+
+  /**
+   * One fact, told to the person this phone is currently being.
+   *
+   * `n.audience` maps a role to the words that role should hear, and a role
+   * left out of it is a role that never learns this happened at all. A parent
+   * is not told a location; a teacher is not told about another room; a student
+   * is told nothing but what concerns them.
+   *
+   * If the fact belongs to a role this phone is not currently playing it waits
+   * in that role's queue and arrives on entry, so switching to Parent still
+   * shows what a parent's phone would have received while you were elsewhere.
+   *
+   * `key` is the fact itself and never the moment, so a confirmation cannot
+   * announce itself twice however many times realtime redelivers the row. The
+   * role is folded into the key, because the same event genuinely is two
+   * different pieces of news to two different people.
    */
   const raise = useCallback((n) => {
-    notify(n.title, n.detail || '', n.key);
+    const audience = n.audience || {};
+    Object.entries(audience).forEach(([who, line]) => {
+      if (!line?.title) return;
+      const item = { key: `${who}:${n.key}`, title: line.title, detail: line.detail || '' };
+      if (who === roleRef.current) {
+        notify(item.title, item.detail, item.key);
+        return;
+      }
+      const q = pending.current[who] || (pending.current[who] = []);
+      if (q.some((x) => x.key === item.key)) return;
+      q.push(item);
+      if (q.length > QUEUE_LIMIT) q.shift();
+    });
   }, []);
 
   raiseRef.current = raise;
@@ -115,6 +214,15 @@ export function VerifiProvider({ children }) {
   useEffect(() => {
     prepareNotifications();
   }, []);
+
+  // Becoming somebody delivers what happened to them while you were not.
+  useEffect(() => {
+    if (!role) return;
+    const q = pending.current[role];
+    if (!q?.length) return;
+    pending.current[role] = [];
+    q.forEach((item) => notify(item.title, item.detail, item.key));
+  }, [role]);
 
   // ── Restore an event in progress ───────────────────────────────────────────
   useEffect(() => {
@@ -174,23 +282,118 @@ export function VerifiProvider({ children }) {
           ...c,
           students: c.students.map((s) =>
             s.id === row.id
-              ? { ...s, status: row.status, confirmedBy: row.confirmed_by, confirmedAt: row.confirmed_at }
+              ? {
+                  ...s,
+                  status: row.status,
+                  confirmedBy: row.confirmed_by,
+                  confirmedAt: row.confirmed_at,
+                  method: row.method || s.method,
+                  place: row.place || s.place,
+                }
               : s
           ),
         }))
       );
-      if (row.status === 'verified') {
+
+      // Realtime echoes this phone's own writes straight back to it. Without
+      // this guard a teacher tapping "Mark whole room present" is told about
+      // their own twenty-four taps, one buzz and one banner each, while the
+      // student in front of them waits. A notification is for something that
+      // happened somewhere else; what you just did with your thumb is not news.
+      if (mine.current.has(row.id)) return;
+
+      if (row.status === 'verified' || row.status === 'reunified') {
         buzz('tap');
         setRingingId(row.id);
         setTimeout(() => setRingingId(null), 1400);
-        raise({
-          key: `confirmed:${row.id}`,
-          title: `${row.name} confirmed`,
+        const released = row.status === 'reunified';
+        const first = String(row.name || '').split(' ')[0];
+        // What staff are told: who, by whom, where. This is the operational
+        // line and it is the one a family must never receive.
+        const staffLine = {
+          title: released ? `${row.name} released to a guardian` : `${row.name} confirmed`,
           detail: [row.confirmed_by, row.place].filter(Boolean).join(' · ') || 'by a staff member',
+        };
+        // A teacher hears about their own room and nothing else.
+        const onMyRoster = row.cluster && row.cluster === teacherRef.current?.room;
+        // A family hears about their own child, without a location. The place
+        // is deliberately dropped rather than reworded: during an active event
+        // where a child is standing is exactly what must not travel.
+        const isMyChild = row.id === MAYA.id;
+
+        // Keyed on the student and what happened to them, deliberately without
+        // a timestamp. Postgres stamps `updated_at` on every write and realtime
+        // is free to redeliver a row, so a key carrying the moment would let
+        // one confirmation buzz a pocket several times.
+        raise({
+          key: `${row.status}:${row.id}`,
+          audience: {
+            admin: staffLine,
+            staff: staffLine,
+            teacher: onMyRoster ? staffLine : null,
+            parent: isMyChild
+              ? {
+                  title: released
+                    ? `${first} has been released to you.`
+                    : `${first} has been verified safe by school staff.`,
+                  // Named, because a family being told which member of staff
+                  // put their name to it is the whole accountability promise.
+                  // Never the place: where a child is standing during an
+                  // active event is the one thing that must not travel.
+                  detail: released
+                    ? 'Handed over at Gate B.'
+                    : `Confirmed in person by ${row.confirmed_by || 'school staff'}.`,
+                }
+              : null,
+          },
         });
       }
     });
   }, [live, raise]);
+
+  // Tracking, shared across every phone. The student's device is the only one
+  // that ever writes a position; every other phone only reads them.
+  useEffect(() => {
+    if (!live) return undefined;
+    let cancelled = false;
+    fetchTracking().then((rows) => {
+      if (cancelled || !rows) return;
+      setTracking(
+        Object.fromEntries(
+          rows.map((r) => [
+            r.student_id,
+            {
+              state: r.state,
+              askedBy: r.asked_by,
+              askedAt: r.asked_at,
+              answeredAt: r.answered_at,
+              overriddenBy: r.overridden_by,
+              overrideReason: r.override_reason,
+              endedReason: r.ended_reason,
+              expiresAt: r.expires_at,
+            },
+          ])
+        )
+      );
+    });
+    const off = subscribeToTracking({
+      onState: (r) =>
+        setTrack(r.student_id, {
+          state: r.state,
+          askedBy: r.asked_by,
+          askedAt: r.asked_at,
+          answeredAt: r.answered_at,
+          overriddenBy: r.overridden_by,
+          overrideReason: r.override_reason,
+          endedReason: r.ended_reason,
+          expiresAt: r.expires_at,
+        }),
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [live, setTrack]);
 
   // ── The event clock ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -206,6 +409,8 @@ export function VerifiProvider({ children }) {
   }, [all]);
 
   const staffName = useMemo(() => (user ? staffNameFrom(user) : 'R. Alvarez'), [user]);
+  const teacher = useMemo(() => TEACHERS.find((t) => t.id === teacherId) || TEACHERS[0], [teacherId]);
+  teacherRef.current = teacher;
   const me = useMemo(() => all.find((s) => s.id === meId) || all[0], [all, meId]);
 
   const setStatus = useCallback((studentId, status, extra = {}) => {
@@ -240,6 +445,7 @@ export function VerifiProvider({ children }) {
       const by = opts.by || staffName;
       const at = new Date().toISOString();
       const method = opts.method || 'roster';
+      claim(studentId);
       buzz('confirm');
       setStatus(studentId, 'verified', {
         confirmedBy: by,
@@ -257,10 +463,23 @@ export function VerifiProvider({ children }) {
       // one action a person came here to take.
       const remaining = all.filter((s) => s.status === 'pending' && s.id !== studentId).length;
       if (remaining === 0) {
-        raise({
-          key: `allclear:${startedAt}`,
+        // The one piece of news every single person in the building wants,
+        // and the only one that carries no risk in reaching any of them.
+        const closed = {
           title: 'Every student accounted for',
           detail: `${counts.verified + 1} confirmed by a person`,
+        };
+        raise({
+          key: `allclear:${startedAt}`,
+          audience: {
+            admin: closed,
+            staff: closed,
+            teacher: closed,
+            parent: {
+              title: 'Every student has been accounted for.',
+              detail: 'The school will tell you what happens next.',
+            },
+          },
         });
       }
 
@@ -272,7 +491,7 @@ export function VerifiProvider({ children }) {
         if (liveRef.current) logScan(studentId, by, opts.code || null, fix, method);
       })();
     },
-    [setStatus, staffName, all, counts.verified, raise, startedAt]
+    [setStatus, staffName, all, counts.verified, raise, startedAt, claim]
   );
 
   /**
@@ -288,6 +507,7 @@ export function VerifiProvider({ children }) {
     (studentId, { guardianName, by, passCode } = {}) => {
       const releasedBy = by || staffName;
       const at = new Date().toISOString();
+      claim(studentId);
       buzz('confirm');
       setStatus(studentId, 'reunified', {
         confirmedBy: releasedBy,
@@ -299,10 +519,20 @@ export function VerifiProvider({ children }) {
       setTimeout(() => setRingingId(null), 1400);
 
       const student = all.find((s) => s.id === studentId);
-      raiseRef.current?.({
-        key: `reunified:${studentId}`,
+      const releaseLine = {
         title: `${student?.name || 'A student'} released`,
         detail: `to ${guardianName || 'a guardian'} by ${releasedBy}`,
+      };
+      raiseRef.current?.({
+        key: `reunified:${studentId}`,
+        audience: {
+          admin: releaseLine,
+          staff: releaseLine,
+          teacher: student?.cluster === teacherRef.current?.room ? releaseLine : null,
+          // The family is standing at the gate watching it happen. Telling
+          // their phone as well is noise, not news.
+          parent: null,
+        },
       });
 
       if (liveRef.current) {
@@ -310,7 +540,7 @@ export function VerifiProvider({ children }) {
       }
       return { ok: true };
     },
-    [setStatus, staffName, all]
+    [setStatus, staffName, all, claim]
   );
 
   /**
@@ -343,12 +573,14 @@ export function VerifiProvider({ children }) {
   /** Put the shared board back to its opening position, mid-demo, from a phone. */
   const resetSharedBoard = useCallback(async () => {
     buzz('weighty');
+    resetNotifications();
+    mine.current.clear();
     setClusters(clone(CLUSTERS));
     setStartedAt(new Date().toISOString());
     setAllClear(false);
     setAnnouncement(null);
     setRingingId(null);
-    setConsent(null);
+    setTracking({});
     if (!liveRef.current) return { ok: true, local: true };
     return resetBoard();
   }, []);
@@ -395,10 +627,20 @@ export function VerifiProvider({ children }) {
       const author = by || staffName;
       const at = new Date().toISOString();
       setStatus(studentId, undefined, { lastSeen: where, lastSeenAt: at, lastSeenBy: author });
-      raiseRef.current?.({
-        key: `lastseen:${studentId}:${at}`,
+      const seenLine = {
         title: `${student?.name || 'A student'} last seen`,
         detail: `${where}, reported by ${author}`,
+      };
+      raiseRef.current?.({
+        key: `lastseen:${studentId}:${at}`,
+        audience: {
+          admin: seenLine,
+          staff: seenLine,
+          teacher: seenLine,
+          // A family must never learn from a push notification that nobody can
+          // find their child. That news is a phone call from a person.
+          parent: null,
+        },
       });
       if (liveRef.current) {
         await sendMessage({
@@ -459,6 +701,10 @@ export function VerifiProvider({ children }) {
         return { ok: false, reason: 'That is not the start word.' };
       }
       buzz('weighty');
+      // A new event is a new set of facts. Without this the second run-through
+      // of a drill is silent, every alert dropped as a repeat of the first.
+      resetNotifications();
+      mine.current.clear();
       const startedAtNow = new Date().toISOString();
       setClusters(clone(CLUSTERS));
       setStartedAt(startedAtNow);
@@ -474,10 +720,25 @@ export function VerifiProvider({ children }) {
           ? `Drill started by ${by}. Confirm your room and report anything unusual here.`
           : `Lockdown started by ${by}. Confirm your room now.`;
 
-      raiseRef.current?.({
-        key: `started:${startedAtNow}`,
+      const openLine = {
         title: kind === 'drill' ? 'Drill started' : 'Lockdown started',
         detail: `by ${by}. Confirm your room.`,
+      };
+      raiseRef.current?.({
+        key: `started:${startedAtNow}`,
+        audience: {
+          admin: openLine,
+          staff: openLine,
+          teacher: openLine,
+          student: {
+            title: kind === 'drill' ? 'Drill started' : 'Lockdown started',
+            detail: 'Stay with your teacher. Have your code ready.',
+          },
+          parent: {
+            title: kind === 'drill' ? 'A drill is underway' : 'The school is in lockdown',
+            detail: 'Please do not come to campus. You will get an update here.',
+          },
+        },
       });
 
       // Every other phone learns from the thread, which they are all watching.
@@ -489,6 +750,8 @@ export function VerifiProvider({ children }) {
 
   const startNewEvent = useCallback(() => {
     buzz('weighty');
+    resetNotifications();
+    mine.current.clear();
     setClusters(clone(CLUSTERS));
     setStartedAt(new Date().toISOString());
     setAllClear(false);
@@ -511,53 +774,161 @@ export function VerifiProvider({ children }) {
     []
   );
 
-  /**
-   * A student is missing and nobody can find them. An administrator can ask
-   * that student's own phone where it is. The request is exactly that: a
-   * request. It travels down the shared thread, the student's screen shows it,
-   * and nothing at all is sent unless they agree.
-   */
-  const askStudentForLocation = useCallback(
+  // ── Locating a student nobody can find ─────────────────────────────────────
+  //
+  // The most invasive thing this product can do, so it is the most constrained.
+  // Four rules, each enforced here rather than left to the interface:
+  //
+  //   1. It can only be asked for while a student is unaccounted for. The
+  //      moment a person confirms them it stops, without anyone remembering.
+  //   2. A request never becomes agreement on its own. There is no timer in
+  //      this file that turns 'asked' into 'sharing', because silence from a
+  //      frightened child is not a yes, and a student hiding from a threat may
+  //      be silent on purpose.
+  //   3. Proceeding without agreement is possible, because an unconscious
+  //      child cannot answer — but only as a named person's written decision,
+  //      stored under its own state so no report can later present it as
+  //      consent.
+  //   4. Everything expires. The clock is set when tracking starts, not when
+  //      somebody thinks to stop it.
+
+  const askToLocate = useCallback(
     async (studentId, byWho) => {
       const who = byWho || staffName;
-      setConsent({ studentId, by: who, at: Date.now(), state: 'asked' });
-      raiseRef.current?.({
-        key: `consent-ask:${studentId}:${Date.now()}`,
-        title: 'Location requested',
-        detail: `${who} asked the student to share where they are`,
-      });
-      if (liveRef.current) {
-        await sendMessage({
-          author: who,
-          role: 'system',
-          body: `CONSENT_ASK:${studentId}:${who}`,
-        });
+      const student = all.find((s) => s.id === studentId);
+      // Rule 1. Asking where somebody is, when a person is already standing
+      // with them, is surveillance with no purpose left to serve.
+      if (student?.status === 'verified' || student?.status === 'reunified') {
+        return { ok: false, reason: `${student.name} has already been confirmed by a person.` };
       }
+      const expiresAt = new Date(Date.now() + TRACK_MINUTES * 60000).toISOString();
+      setTrack(studentId, {
+        state: 'asked',
+        askedBy: who,
+        askedAt: new Date().toISOString(),
+        answeredAt: null,
+        overriddenBy: null,
+        overrideReason: null,
+        endedReason: null,
+        expiresAt,
+      });
+      raiseRef.current?.({
+        key: `locate-ask:${studentId}:${Date.now()}`,
+        audience: {
+          student: {
+            title: 'The school is looking for you',
+            detail: `${who} asked if you will share where you are. You can say no.`,
+          },
+          admin: { title: 'Location requested', detail: `${who} asked ${student?.name || 'a student'} to share where they are` },
+          staff: { title: 'Location requested', detail: `${who} asked ${student?.name || 'a student'} to share where they are` },
+        },
+      });
+      if (liveRef.current) await pushTrackingAsk({ studentId, askedBy: who, expiresAt });
       return { ok: true };
     },
-    [staffName]
+    [staffName, all, setTrack]
   );
 
-  /** The student's answer. Refusing is a first class outcome, not a failure. */
-  const answerConsent = useCallback(
-    async (studentId, agreed, place) => {
-      setConsent((c) => (c && c.studentId === studentId ? { ...c, state: agreed ? 'shared' : 'refused', place } : c));
-      if (agreed && place) setStatus(studentId, undefined, { sharedPlace: place });
-      raiseRef.current?.({
-        key: `consent-answer:${studentId}:${agreed}`,
-        title: agreed ? 'Student shared their location' : 'Student declined',
-        detail: agreed ? place || 'location received' : 'nothing was sent',
+  /** The student's own answer. Refusing is a first class outcome, not a failure. */
+  const answerLocate = useCallback(
+    async (studentId, agreed) => {
+      const student = all.find((s) => s.id === studentId);
+      setTrack(studentId, {
+        state: agreed ? 'sharing' : 'refused',
+        answeredAt: new Date().toISOString(),
       });
-      if (liveRef.current) {
-        await sendMessage({
-          author: 'Student device',
-          role: 'system',
-          body: agreed ? `CONSENT_SHARED:${studentId}:${place || 'unknown'}` : `CONSENT_REFUSED:${studentId}`,
-        });
-      }
+      raiseRef.current?.({
+        key: `locate-answer:${studentId}:${agreed}`,
+        audience: {
+          admin: {
+            title: agreed ? `${student?.name || 'Student'} is sharing their location` : `${student?.name || 'Student'} declined`,
+            detail: agreed ? 'their phone is reporting now' : 'nothing was sent, keep searching',
+          },
+          staff: {
+            title: agreed ? `${student?.name || 'Student'} is sharing their location` : `${student?.name || 'Student'} declined`,
+            detail: agreed ? 'their phone is reporting now' : 'nothing was sent, keep searching',
+          },
+        },
+      });
+      if (liveRef.current) await pushTrackingAnswer({ studentId, agreed });
+      return { ok: true };
     },
-    [setStatus]
+    [all, setTrack]
   );
+
+  /**
+   * Rule 3. A named administrator proceeding without an answer.
+   *
+   * Both the name and the reason are required here and again by a database
+   * constraint, and the student's own screen says plainly that it happened.
+   * Nothing about this is quiet.
+   */
+  const overrideLocate = useCallback(
+    async (studentId, by, reason) => {
+      const who = (by || '').trim();
+      const why = (reason || '').trim();
+      if (!who || !why) return { ok: false, reason: 'An override needs a name and a reason.' };
+      const student = all.find((s) => s.id === studentId);
+      if (student?.status === 'verified' || student?.status === 'reunified') {
+        return { ok: false, reason: `${student.name} has already been confirmed by a person.` };
+      }
+      const expiresAt = new Date(Date.now() + TRACK_MINUTES * 60000).toISOString();
+      setTrack(studentId, { state: 'overridden', overriddenBy: who, overrideReason: why, expiresAt });
+      raiseRef.current?.({
+        key: `locate-override:${studentId}:${Date.now()}`,
+        audience: {
+          student: {
+            title: 'The school turned on your location',
+            detail: `${who} did this because you did not answer. You can still turn it off.`,
+          },
+          admin: { title: 'Location override', detail: `${who}: ${why}` },
+          staff: { title: 'Location override', detail: `${who}: ${why}` },
+        },
+      });
+      if (liveRef.current) await pushTrackingOverride({ studentId, by: who, reason: why, expiresAt });
+      return { ok: true };
+    },
+    [all, setTrack]
+  );
+
+  /** Stop. Found, revoked by the student, event over, or expired. */
+  const endLocate = useCallback(
+    async (studentId, why = 'stopped') => {
+      setTrack(studentId, { state: 'ended', endedReason: why });
+      if (liveRef.current) await pushTrackingEnd({ studentId, reason: why });
+      return { ok: true };
+    },
+    [setTrack]
+  );
+
+  /**
+   * Rules 1 and 4, on a timer rather than trusted to a person.
+   *
+   * A student who has been found is no longer missing, and a permission that
+   * outlives the emergency it was granted for is just surveillance. Both end
+   * tracking without anybody having to remember — including the member of staff
+   * who started it and has since moved on to the next room, which is the case
+   * this is really written for.
+   */
+  useEffect(() => {
+    const sweep = () => {
+      const now = Date.now();
+      Object.entries(tracking).forEach(([id, t]) => {
+        if (!isLocating(t)) return;
+        const student = all.find((s) => s.id === id);
+        if (student?.status === 'verified' || student?.status === 'reunified') {
+          endLocate(id, 'found by a person');
+        } else if (!eventActive) {
+          endLocate(id, 'the event ended');
+        } else if (t.expiresAt && new Date(t.expiresAt).getTime() <= now) {
+          endLocate(id, `expired after ${TRACK_MINUTES} minutes`);
+        }
+      });
+    };
+    sweep();
+    const id = setInterval(sweep, 5000);
+    return () => clearInterval(id);
+  }, [tracking, all, eventActive, endLocate]);
 
   const value = useMemo(
     () => ({
@@ -572,15 +943,21 @@ export function VerifiProvider({ children }) {
       setAllClear,
       announcement,
       setAnnouncement,
+      view,
+      setView,
+      role,
       confirmStudent,
       reunify,
       findStudents,
       resetSharedBoard,
       markNotWithClass,
       reportLastSeen,
-      consent,
-      askStudentForLocation,
-      answerConsent,
+      tracking,
+      trackingFor: (id) => tracking[id] || null,
+      askToLocate,
+      answerLocate,
+      overrideLocate,
+      endLocate,
       raise,
       undoConfirm,
       addOffRoster,
@@ -593,7 +970,7 @@ export function VerifiProvider({ children }) {
       teachers: TEACHERS,
       teacherId,
       setTeacherId,
-      teacher: TEACHERS.find((t) => t.id === teacherId) || TEACHERS[0],
+      teacher,
       reset: startNewEvent,
       elapsed,
       startedAt,
@@ -608,7 +985,7 @@ export function VerifiProvider({ children }) {
       buzz,
       maya: all.find((s) => s.id === MAYA.id),
     }),
-    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, raise, confirmStudent, reunify, findStudents, resetSharedBoard, markNotWithClass, reportLastSeen, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, consent, askStudentForLocation, answerConsent, elapsed, startedAt, board, live, user, staffName, me, meId]
+    [clusters, all, counts, mode, ringingId, dimField, allClear, announcement, view, role, teacher, raise, confirmStudent, reunify, findStudents, resetSharedBoard, markNotWithClass, reportLastSeen, undoConfirm, addOffRoster, setStatus, startNewEvent, startEvent, endEvent, eventActive, startedBy, teacherId, tracking, askToLocate, answerLocate, overrideLocate, endLocate, elapsed, startedAt, board, live, user, staffName, me, meId]
   );
 
   return <VerifiContext.Provider value={value}>{children}</VerifiContext.Provider>;

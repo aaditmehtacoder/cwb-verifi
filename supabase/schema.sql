@@ -19,6 +19,8 @@
 -- ── Wipe ────────────────────────────────────────────────────────────────────
 -- Children first, then parents. `cascade` covers policies, indexes and any
 -- publication membership left over from an earlier schema.
+drop table if exists public.track_points   cascade;
+drop table if exists public.tracking       cascade;
 drop table if exists public.reunifications cascade;
 drop table if exists public.guardians      cascade;
 drop table if exists public.scans          cascade;
@@ -101,6 +103,48 @@ create table public.messages (
   created_at  timestamptz not null default now()
 );
 
+-- ── Locating a student nobody can find ──────────────────────────────────────
+-- The rules below are enforced here rather than merely described: a request
+-- never becomes agreement on its own, there is no timer that flips the state,
+-- and an override is a named person's decision with a written reason, stored
+-- as a different state so it can never later be mistaken for consent.
+-- See supabase/tracking.sql for the same tables as a standalone migration.
+
+create table public.tracking (
+  student_id      text primary key references public.students(id) on delete cascade,
+  -- asked      the student has been asked and has not answered
+  -- sharing    the student said yes
+  -- refused    the student said no. A final answer, not a retry prompt.
+  -- overridden a named administrator turned it on without agreement
+  -- ended      finished: found, revoked, event over, or expired
+  state           text not null check (state in ('asked', 'sharing', 'refused', 'overridden', 'ended')),
+  asked_by        text,
+  asked_at        timestamptz not null default now(),
+  answered_at     timestamptz,
+  overridden_by   text,
+  override_reason text,
+  ended_reason    text,
+  -- Written when tracking begins, not when somebody remembers to stop it.
+  expires_at      timestamptz,
+  updated_at      timestamptz not null default now(),
+  constraint override_needs_a_name_and_a_reason check (
+    state <> 'overridden' or (overridden_by is not null and override_reason is not null)
+  )
+);
+
+-- The track itself. One row per fix the student's own device reported.
+create table public.track_points (
+  id          bigserial primary key,
+  student_id  text not null references public.students(id) on delete cascade,
+  lat         double precision not null,
+  lon         double precision not null,
+  accuracy    double precision,
+  place       text,
+  created_at  timestamptz not null default now()
+);
+
+create index track_points_student_idx on public.track_points (student_id, created_at desc);
+
 create index messages_created_idx on public.messages (created_at);
 
 -- ── Access ──────────────────────────────────────────────────────────────────
@@ -115,6 +159,8 @@ alter table public.guardians      enable row level security;
 alter table public.scans          enable row level security;
 alter table public.reunifications enable row level security;
 alter table public.messages       enable row level security;
+alter table public.tracking       enable row level security;
+alter table public.track_points   enable row level security;
 
 create policy "read students"      on public.students       for select using (true);
 create policy "confirm students"   on public.students       for update using (true) with check (true);
@@ -125,10 +171,17 @@ create policy "read reunifications"  on public.reunifications for select using (
 create policy "write reunifications" on public.reunifications for insert with check (true);
 create policy "read messages"      on public.messages       for select using (true);
 create policy "write messages"     on public.messages       for insert with check (true);
+create policy "read tracking"      on public.tracking       for select using (true);
+create policy "write tracking"     on public.tracking       for insert with check (true);
+create policy "update tracking"    on public.tracking       for update using (true) with check (true);
+create policy "read track points"  on public.track_points   for select using (true);
+create policy "write track points" on public.track_points   for insert with check (true);
 
 -- Push every status change to every phone watching the board.
 alter publication supabase_realtime add table public.students;
 alter publication supabase_realtime add table public.messages;
+alter publication supabase_realtime add table public.tracking;
+alter publication supabase_realtime add table public.track_points;
 
 -- ── Roster ──────────────────────────────────────────────────────────────────
 -- 106 students across 6 clusters. Grade 10 throughout; the absent six were

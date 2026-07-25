@@ -25,6 +25,13 @@ const KEY = (process.env.EXPO_PUBLIC_SUPABASE_KEY || '').trim();
 
 export const isConfigured = () => URL.startsWith('http') && KEY.length > 20;
 
+// Supabase resolves a realtime channel by its topic, so two subscribers asking
+// for the same name get the same object back — and the second one attaching a
+// handler to an already-subscribed channel throws, taking the screen with it.
+// The store and the track view both watch tracking, quite legitimately, so
+// every subscriber gets a topic of its own.
+let channelSeq = 0;
+
 export const supabase = isConfigured()
   ? createClient(URL, KEY, {
       auth: {
@@ -192,7 +199,7 @@ export async function pushReunification({ studentId, guardianName, releasedBy, p
 export function subscribeToBoard(onChange) {
   if (!supabase) return () => {};
   const channel = supabase
-    .channel('board')
+    .channel(`board-${(channelSeq += 1)}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'students' }, (payload) => {
       onChange(payload.new);
     })
@@ -262,6 +269,131 @@ export async function resetBoard() {
   return { ok: true };
 }
 
+// ── Locating a student nobody can find ───────────────────────────────────────
+//
+// Every write here is one of four things happening to one student: they were
+// asked, they answered, somebody overrode their silence, or it stopped. There
+// is deliberately no call that turns tracking on without one of those.
+
+export async function fetchTracking() {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('tracking').select('*');
+  if (error) return null;
+  return data;
+}
+
+/** Ask a student to share where they are. A request, and nothing more. */
+export async function pushTrackingAsk({ studentId, askedBy, expiresAt }) {
+  if (!supabase) return { ok: false, reason: 'not configured' };
+  const { error } = await supabase.from('tracking').upsert(
+    {
+      student_id: studentId,
+      state: 'asked',
+      asked_by: askedBy,
+      asked_at: new Date().toISOString(),
+      answered_at: null,
+      overridden_by: null,
+      override_reason: null,
+      ended_reason: null,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'student_id' }
+  );
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+/** The student's own answer. Refusing is a first class outcome. */
+export async function pushTrackingAnswer({ studentId, agreed }) {
+  if (!supabase) return { ok: false, reason: 'not configured' };
+  const { error } = await supabase
+    .from('tracking')
+    .update({
+      state: agreed ? 'sharing' : 'refused',
+      answered_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('student_id', studentId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+/**
+ * A named person deciding to proceed without agreement.
+ *
+ * Stored under its own state rather than as 'sharing', so no report written
+ * afterwards can present it as something the student agreed to. The database
+ * refuses the row outright if either the name or the reason is missing.
+ */
+export async function pushTrackingOverride({ studentId, by, reason, expiresAt }) {
+  if (!supabase) return { ok: false, reason: 'not configured' };
+  const { error } = await supabase
+    .from('tracking')
+    .update({
+      state: 'overridden',
+      overridden_by: by,
+      override_reason: reason,
+      expires_at: expiresAt,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('student_id', studentId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+/** Stop. Found, revoked by the student, event over, or expired. */
+export async function pushTrackingEnd({ studentId, reason }) {
+  if (!supabase) return { ok: false, reason: 'not configured' };
+  const { error } = await supabase
+    .from('tracking')
+    .update({ state: 'ended', ended_reason: reason, updated_at: new Date().toISOString() })
+    .eq('student_id', studentId);
+  if (error) return { ok: false, reason: error.message };
+  return { ok: true };
+}
+
+/** One fix from the student's own device. Only ever written by that device. */
+export async function pushTrackPoint({ studentId, fix, place }) {
+  if (!supabase || !fix) return { ok: false };
+  const { error } = await supabase.from('track_points').insert({
+    student_id: studentId,
+    lat: fix.lat,
+    lon: fix.lon,
+    accuracy: fix.accuracy ?? null,
+    place: place || null,
+  });
+  return { ok: !error };
+}
+
+export async function fetchTrack(studentId, limit = 40) {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('track_points')
+    .select('id,lat,lon,accuracy,place,created_at')
+    .eq('student_id', studentId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) return null;
+  return data;
+}
+
+/** Tracking state changes and new fixes, from any phone. */
+export function subscribeToTracking({ onState, onPoint }) {
+  if (!supabase) return () => {};
+  channelSeq += 1;
+  const channel = supabase
+    .channel(`tracking-${(channelSeq += 1)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'tracking' }, (p) => {
+      if (p.new?.student_id) onState?.(p.new);
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'track_points' }, (p) => {
+      if (p.new) onPoint?.(p.new);
+    })
+    .subscribe();
+  return () => supabase.removeChannel(channel);
+}
+
 // ── Messages ─────────────────────────────────────────────────────────────────
 
 export async function fetchMessages(limit = 60) {
@@ -290,7 +422,7 @@ export async function sendMessage({ author, role = 'staff', body, place }) {
 export function subscribeToMessages(onMessage) {
   if (!supabase) return () => {};
   const channel = supabase
-    .channel('messages')
+    .channel(`messages-${(channelSeq += 1)}`)
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (payload) => {
       onMessage(payload.new);
     })

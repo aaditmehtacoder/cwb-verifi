@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, Pressable, StatusBar, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
@@ -147,6 +147,13 @@ function Shell() {
   const [route, setRoute] = useState('splash');
   const navigate = useCallback((next) => setRoute(next), []);
   const { component: Screen, bare } = SCREENS[route];
+  // Which screen this phone is on decides who it is being, and therefore which
+  // notifications it is entitled to hear. A parent's phone is never told where
+  // a child is standing.
+  const { setView } = useVerifi();
+  useEffect(() => {
+    setView(route);
+  }, [route, setView]);
   // The splash is the one accent-filled screen; the safe area matches it.
   const surface = route === 'splash' ? C.accent : C.paper;
 

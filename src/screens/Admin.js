@@ -6,6 +6,7 @@ import Explain from '../components/Explain';
 import { AccountabilityField } from '../components/Field';
 import Avatar from '../components/Avatar';
 import Where from '../components/Where';
+import Locate from '../components/Locate';
 import { CONFLICTS, EVIDENCE, MAYA, STAFF, SUGGESTION, TEMPLATES } from '../data';
 
 const MAYA_ID = MAYA.id;
@@ -175,7 +176,7 @@ const METHOD_LINE = {
 };
 
 export default function Admin({ navigate }) {
-  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, endEvent, elapsed, confirmStudent, staffName, consent, askStudentForLocation, resetSharedBoard, live } = useVerifi();
+  const { clusters, all, counts, mode, ringingId, dimField, announcement, setAnnouncement, endEvent, elapsed, confirmStudent, staffName, resetSharedBoard, live } = useVerifi();
   const [tile, setTile] = useState(null);
   const [resetting, setResetting] = useState(false);
   const [more, setMore] = useState(false);
@@ -296,59 +297,7 @@ export default function Admin({ navigate }) {
 
             {/* Asking the student's own phone. It is a request, and a refusal
                 is a perfectly good answer. */}
-            <View
-              style={{
-                marginTop: S.md,
-                borderWidth: 1,
-                borderColor: C.rule,
-                borderRadius: R.small,
-                padding: S.md,
-                gap: S.sm,
-              }}
-            >
-              <Text style={[T.label, { fontSize: 10 }]}>Nobody can find her</Text>
-              {consent?.state === 'shared' ? (
-                <>
-                  <Text style={{ fontFamily: F.serif, fontSize: 15, lineHeight: 23, color: C.ink }}>
-                    She agreed to share where she is.
-                  </Text>
-                  <Text style={{ fontFamily: F.mono, fontSize: 12, color: C.inkSoft }}>
-                    {consent.place || 'location received'}
-                  </Text>
-                  <Text style={T.small}>
-                    Send somebody to look. A person still has to see her before the count moves.
-                  </Text>
-                </>
-              ) : consent?.state === 'refused' ? (
-                <>
-                  <Text style={T.small}>
-                    She declined, and nothing was sent. Keep searching the usual way.
-                  </Text>
-                  <Button
-                    title="Ask once more"
-                    variant="secondary"
-                    onPress={() => askStudentForLocation(MAYA_ID, staffName)}
-                  />
-                </>
-              ) : consent?.state === 'asked' ? (
-                <Text style={T.small}>
-                  Asked at {new Date(consent.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.
-                  Waiting for her to answer on her own phone.
-                </Text>
-              ) : (
-                <>
-                  <Text style={T.small}>
-                    Ask her phone where she is. She sees the request and can refuse, and nothing is sent
-                    unless she agrees.
-                  </Text>
-                  <Button
-                    title="Ask her to share her location"
-                    variant="secondary"
-                    onPress={() => askStudentForLocation(MAYA_ID, staffName)}
-                  />
-                </>
-              )}
-            </View>
+            <Locate student={all.find((s) => s.id === MAYA_ID)} style={{ marginTop: S.md }} />
 
             <Button
               title="Scan to confirm"
@@ -606,6 +555,9 @@ export default function Admin({ navigate }) {
               <>
                 <EvidenceTable />
                 <SuggestionBlock />
+                {/* Locating is offered for anyone still unaccounted for, not
+                    just the student the demo is built around. */}
+                <Locate student={all.find((s) => s.id === tile.id) || tile} />
                 <Button
                   title="Scan to confirm"
                   onPress={() => {

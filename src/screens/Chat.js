@@ -146,7 +146,11 @@ export default function Chat() {
       setMessages((prev) => (prev.some((m) => m.id === row.id) ? prev : [...prev, row]));
       toBottom();
       if (row.author !== staffName && row.role === 'staff') {
-        raise({ key: `msg:${row.id}`, title: row.author, detail: row.body });
+        // The thread is how staff talk to each other during an event. A family
+        // reading it would be reading about other people's children, so it
+        // never reaches the parent or student views.
+        const line = { title: row.author, detail: row.body };
+        raise({ key: `msg:${row.id}`, audience: { admin: line, staff: line, teacher: line } });
       }
     });
   }, [status, staffName, raise]);
